@@ -103,6 +103,34 @@ alembic revision --autogenerate -m "beskrivning"   # skapa
 alembic upgrade head                                 # applicera
 ```
 
+## AI-driven feature-utveckling (team.py)
+
+`team.py` är ett fristående multi-agent-team (orkestrerare + `architect`, `frontend`,
+`backend`, `reviewer`) som bygger en hel feature från en målbeskrivning. Agenterna är
+anpassade till det här monorepots stack (FastAPI i `apps/api`, Next.js i `apps/web`).
+
+**Smidigaste vägen — ett kommando som bygger featuren OCH öppnar en PR:**
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+scripts/feature.sh <branch-namn> "<mål för featuren>"
+
+# exempel
+scripts/feature.sh dark-mode "Lägg till en dark-mode-toggle i frontenden"
+```
+Skriptet skapar `feat/<namn>` från `main`, kör agent-teamet (som skriver direkt in i
+`apps/...`), committar, pushar och öppnar en pull request. Planen hamnar i
+`docs/plans/<slug>.md` och en kodgranskning i `docs/reviews/<slug>.md`.
+
+**Köra teamet utan git-flödet** (skriver till en sandlåda i stället):
+```bash
+python team.py --output ./team_output "Bygg X"
+python team.py                              # interaktivt läge
+```
+
+> ⚠️ Agenterna har bara fil-verktyg — de kör inte bygg/tester. Granska PR:en och kör
+> verifieringen (`npx tsc --noEmit && npm run build`, `py_compile`/tester) **innan**
+> du mergar. Granskaragentens `docs/reviews/<slug>.md` är en hjälp, inte en garanti.
+
 ## Bidra (git-arbetsflöde)
 
 Allt arbete sker på en feature-branch och landar via pull request — `main` ska alltid

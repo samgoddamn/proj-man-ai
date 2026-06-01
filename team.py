@@ -26,6 +26,34 @@ from pathlib import Path
 
 client = anthropic.Anthropic()
 output_dir: Path = Path("./team_output").resolve()
+feature_slug: str = "feature"  # sätts från --feature; används för doc-sökvägar
+
+# ── Projektkontext (vävs in i varje agents prompt) ───────────────────────────
+
+PROJECT_CONTEXT = """\
+## Project context — you work INSIDE an existing monorepo, not a blank slate
+
+Repo layout (paths are relative to the output root, which is the repo root):
+- apps/web/        Next.js 16 (App Router) + React 19 + TypeScript + Tailwind.
+                   Client-side fetching via apps/web/lib/api.ts (typed fetch that
+                   attaches the JWT). Auth via apps/web/lib/auth.ts + useRequireAuth.
+                   Reusable UI in apps/web/components/ui/primitives.tsx.
+- apps/api/        FastAPI + Pydantic v2 + SQLAlchemy 2.0 (async).
+                   Routers: apps/api/app/routers/<resource>.py (registered in main.py)
+                   DTOs:    apps/api/app/dto.py
+                   Models:  apps/api/app/models.py
+                   Session dep: apps/api/app/db.py (get_session)
+                   Auth deps:   apps/api/app/deps.py (get_current_user, ensure_project_access)
+- packages/agents/ LangGraph-pipeline. Do NOT modify unless the task is about it.
+- alembic/         DB-migrationer. Nya/ändrade modeller kräver en migration i alembic/versions/.
+
+Rules for everyone:
+- Read neighbouring files first (read_file / list_directory) and MATCH existing
+  conventions and imports. Do not invent a parallel style.
+- Write each file under its correct package path. Use relative paths from the repo root.
+- NEVER overwrite root ARCHITECTURE.md, README.md or CLAUDE.md.
+- Skip node_modules/.next/.venv — never read or write there.
+"""
 
 # ── File tools (every agent gets these) ──────────────────────────────────────
 
@@ -86,12 +114,20 @@ def _read_file(path: str) -> str:
     return full.read_text(encoding="utf-8") if full.exists() else f"Error: {path} not found"
 
 
+# Tunga mappar som aldrig ska listas/genomsökas (sparar tokens, undviker brus).
+_IGNORE_DIRS = {"node_modules", ".next", ".git", ".venv", "venv", "__pycache__", "team_output"}
+
+
 def _list_directory(path: str = ".") -> str:
     full = output_dir / path
     if not full.exists():
         return f"Error: {path} not found"
     entries = sorted(full.iterdir(), key=lambda p: (p.is_file(), p.name))
-    lines = [("  " if e.is_file() else "D ") + e.name for e in entries]
+    lines = [
+        ("  " if e.is_file() else "D ") + e.name
+        for e in entries
+        if e.name not in _IGNORE_DIRS
+    ]
     return "\n".join(lines) if lines else "(empty)"
 
 
@@ -119,16 +155,17 @@ AGENTS = {
 You are the Architect. You design before anyone builds.
 
 Responsibilities:
-- Decide what files are needed and where they live
-- Define API contracts (endpoint paths, request/response shapes)
-- Design data models and TypeScript interfaces
-- Identify shared utilities
-- Write ARCHITECTURE.md summarizing the plan
+- Decide what files are needed and where they live (using the monorepo layout)
+- Define API contracts: FastAPI endpoint paths + Pydantic request/response shapes
+- Design SQLAlchemy models and the matching Alembic migration outline
+- Design the frontend pieces (pages, components, api-client additions)
+- Write the design plan to docs/plans/<feature-slug>.md
 
 Rules:
-- Write plan documents only — don't implement features
-- Be concise and specific
-- Write ARCHITECTURE.md last, after thinking through the design
+- Write the plan document ONLY — don't implement features
+- Be concise and specific; reference real paths (apps/api/app/..., apps/web/...)
+- NEVER write to the root ARCHITECTURE.md — your plan goes in docs/plans/<feature-slug>.md
+- Write the plan last, after thinking through the design
 """,
     },
     "frontend": {
@@ -143,39 +180,48 @@ Responsibilities:
 - Build accessible, responsive UIs with proper loading and error states
 - Check ARCHITECTURE.md first if it exists — follow the plan
 
-Conventions:
-- Components → components/<FeatureName>/index.tsx
-- Hooks       → hooks/use<Name>.ts
-- Types       → types/<feature>.ts
+Conventions (this repo's real paths):
+- Pages       → apps/web/app/<route>/page.tsx  ("use client" + useRequireAuth för skyddade sidor)
+- Components   → apps/web/components/<Feature>/...
+- Hooks/utils  → apps/web/lib/use<Name>.ts
+- API-anrop    → använd apps/web/lib/api.ts (lägg till metoder där, bifogar JWT automatiskt)
+- UI           → återanvänd apps/web/components/ui/primitives.tsx (Button, Card, Field, Input…)
 
 Rules:
 - Never skip error states or loading states
 - Keep each file focused — no 500-line components
 - Use TypeScript strictly — no `any`
+- Match the existing client-side fetch-pattern; bygg inte en parallell datahämtning
 """,
     },
     "backend": {
         "emoji": "⚙️",
         "description": "Builds API routes, services, and data access layers",
         "system": """\
-You are the Backend Developer. You build robust, secure server-side code.
+You are the Backend Developer. You build robust, secure FastAPI (Python 3.12) code.
 
 Responsibilities:
-- Write Next.js App Router API routes (or Express handlers)
-- Implement business logic with proper input validation
-- Write services for reusable data access
-- Handle errors with correct HTTP status codes
-- Check ARCHITECTURE.md first if it exists — follow the plan
+- Add/extend FastAPI routers (APIRouter) in apps/api/app/routers/<resource>.py
+- Define request/response DTOs in apps/api/app/dto.py (Pydantic v2; from_attributes
+  för ORM-serialisering)
+- Add SQLAlchemy 2.0 models to apps/api/app/models.py when persistence is needed,
+  AND a matching Alembic migration in alembic/versions/ (följ formatet i 0002_auth.py)
+- Use the get_session dependency (apps/api/app/db.py) and auth deps
+  (apps/api/app/deps.py: get_current_user, ensure_project_access) to protect and
+  org-scope routes
+- Register new routers in apps/api/app/main.py
+- Check docs/plans/<feature-slug>.md first if it exists — follow the plan
 
-Conventions:
-- Routes   → api/<resource>/route.ts
-- Services → services/<name>.ts
-- Types    → types/<resource>.ts
+Conventions (this repo's real paths):
+- Routers → apps/api/app/routers/<resource>.py
+- DTOs    → apps/api/app/dto.py
+- Models  → apps/api/app/models.py  (+ alembic/versions/ migration)
 
 Rules:
-- Validate all inputs — never trust user data
-- Return consistent error shapes
-- No secrets hardcoded — use process.env
+- Async SQLAlchemy throughout (matcha mönstren i befintliga routrar/modeller)
+- Validate all inputs with Pydantic — never trust user data
+- Return consistent error shapes via HTTPException
+- No secrets hardcoded — use os.environ
 """,
     },
     "reviewer": {
@@ -185,15 +231,17 @@ Rules:
 You are the Code Reviewer. You find real bugs, not style nitpicks.
 
 Responsibilities:
-- Read every file in the output directory
+- Review the files the other agents just created/changed for THIS feature (the
+  orchestrator lists them in your context). Read those files with read_file.
 - Identify: bugs, security vulnerabilities, missing validation, race conditions, unhandled errors
-- Write REVIEW.md with findings organized by severity: Critical / Major / Minor
+- Write findings to docs/reviews/<feature-slug>.md, organized by severity: Critical / Major / Minor
 
 Rules:
+- Only review this feature's files — do NOT crawl the whole repo, node_modules or .next
 - Quote the specific code that has a problem
 - Explain *why* it's a problem
 - For Critical/Major issues, show the fix
-- Don't rewrite files — write REVIEW.md only
+- Don't rewrite files — write docs/reviews/<feature-slug>.md only
 - Skip pure style/naming preferences unless they cause confusion
 """,
     },
@@ -211,7 +259,13 @@ def run_subagent(role: str, task: str, context: str = "") -> str:
     emoji = profile["emoji"]
     print(f"  {emoji}  [{role}] ▶  {task[:70]}{'…' if len(task) > 70 else ''}")
 
-    system = profile["system"]
+    system = (
+        profile["system"]
+        + "\n\n"
+        + PROJECT_CONTEXT
+        + f"\n\nFeature slug for doc paths: `{feature_slug}` "
+        f"(plan → docs/plans/{feature_slug}.md, review → docs/reviews/{feature_slug}.md)"
+    )
     if context:
         system += f"\n\n## Context from orchestrator\n{context}"
 
@@ -323,6 +377,14 @@ Rules:
 def run_orchestrator(goal: str) -> str:
     """Run the orchestrator until it finishes, then return the summary."""
     print(f"\n🎯  {goal}\n{'─' * 60}")
+    orchestrator_system = (
+        ORCHESTRATOR_SYSTEM
+        + "\n\n"
+        + PROJECT_CONTEXT
+        + f"\n\nThis feature's slug is `{feature_slug}`. Pass it to agents so the "
+        f"architect writes docs/plans/{feature_slug}.md and the reviewer writes "
+        f"docs/reviews/{feature_slug}.md. Tell the reviewer exactly which files were created."
+    )
     messages = [{"role": "user", "content": goal}]
 
     while True:
@@ -330,7 +392,7 @@ def run_orchestrator(goal: str) -> str:
             model="claude-opus-4-8",
             max_tokens=16000,
             thinking={"type": "adaptive"},
-            system=ORCHESTRATOR_SYSTEM,
+            system=orchestrator_system,
             tools=[DISPATCH_TOOL],
             messages=messages,
         )
@@ -398,14 +460,22 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o",
         default="./team_output",
-        help="Output directory (default: ./team_output)",
+        help="Output directory (default: ./team_output; sätt till repo-roten för att "
+        "skriva direkt in i monorepot)",
+    )
+    parser.add_argument(
+        "--feature", "-f",
+        default="feature",
+        help="Kort slug för featuren (styr doc-sökvägar: docs/plans/<slug>.md m.fl.)",
     )
     args = parser.parse_args()
 
-    global output_dir
+    global output_dir, feature_slug
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    feature_slug = args.feature
     print(f"Output: {output_dir}")
+    print(f"Feature: {feature_slug}")
 
     if args.goal:
         summary = run_orchestrator(args.goal)

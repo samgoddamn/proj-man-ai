@@ -52,6 +52,15 @@ Pull requests kräver ett git-remote (t.ex. GitHub) och `gh` CLI inloggad
 och tala om för användaren att remote + `gh` behöver sättas upp för att PR ska kunna
 öppnas.
 
+## Agent-teamet (team.py)
+
+`scripts/feature.sh <namn> "<mål>"` kör multi-agent-teamet i `team.py` och landar
+resultatet i en pull request (branch → team.py → commit → push → PR). Agenterna är
+anpassade till stacken (FastAPI i `apps/api`, Next.js i `apps/web`); planer skrivs till
+`docs/plans/<slug>.md`, granskningar till `docs/reviews/<slug>.md`. Detta är det
+föredragna sättet att starta en ny feature. Skriptet följer redan branch + PR-flödet
+nedan. Kom ihåg: teamet kör inte bygg/tester — verifiera före merge.
+
 ## Verifiering före PR
 - Backend (Python): `python -m py_compile` på ändrade filer; kör relevanta tester.
 - Frontend: `cd apps/web && npx tsc --noEmit && npm run build`.
