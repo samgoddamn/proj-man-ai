@@ -1,0 +1,11 @@
+Analysera följande projekt och producera en projektdefinition.
+
+Projektnamn: {{ brief.name }}
+Beskrivning: {{ brief.description }}
+{% if brief.target_audience %}Angiven målgrupp: {{ brief.target_audience }}
+{% endif %}{% if brief.business_goals %}Affärsmål: {{ brief.business_goals }}
+{% endif %}{% if brief.budget %}Budget: {{ brief.budget }}
+{% endif %}{% if brief.timeframe %}Tidsram: {{ brief.timeframe }}
+{% endif %}
+Producera: overview, domain, target_audience, core_features (med rationale per
+funktion), functional_requirements, out_of_scope och key_risks.

@@ -1,0 +1,18 @@
+Bryt ned följande epic till user stories och tasks.
+
+Projekt: {{ brief.name }}
+
+Epic: {{ epic.title }}
+Beskrivning: {{ epic.description }}
+Prioritet: {{ epic.priority.value }}
+Affärsvärde: {{ epic.business_value }}
+
+Relevant arkitektur att förankra tasks i:
+Datamodell:
+{% for d in architecture.data_model %}- {{ d.name }} ({{ d.fields | join(", ") }})
+{% endfor %}
+API:
+{% for a in architecture.api_design %}- {{ a.method }} {{ a.path }} — {{ a.purpose }}
+{% endfor %}
+Returnera epic_title satt till exakt "{{ epic.title }}" och en lista med stories,
+var och en med tasks (inkl. testuppgifter) och estimat.

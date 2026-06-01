@@ -1,0 +1,8 @@
+**/__pycache__/
+**/*.pyc
+.git/
+.env
+.venv/
+apps/web/node_modules/
+apps/web/.next/
+*.md

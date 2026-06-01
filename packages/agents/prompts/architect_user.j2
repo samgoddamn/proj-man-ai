@@ -1,0 +1,14 @@
+Föreslå teknisk arkitektur för projektet.
+
+Projekt: {{ brief.name }}
+Domän: {{ discovery.domain }}
+Översikt: {{ discovery.overview }}
+
+Epics som arkitekturen ska stödja:
+{% for e in plan.epics %}- [{{ e.priority.value }}] {{ e.title }} — {{ e.description }}
+{% endfor %}
+Funktionella krav:
+{% for r in discovery.functional_requirements %}- {{ r }}
+{% endfor %}
+Producera stack (med rationale per lager), data_model (entiteter med fält och
+relationer), api_design (centrala endpoints) och en övergripande rationale.

@@ -1,0 +1,17 @@
+Skapa roadmap och epics för projektet utifrån projektdefinitionen nedan.
+
+Projekt: {{ brief.name }}
+Översikt: {{ discovery.overview }}
+Domän: {{ discovery.domain }}
+Målgrupp: {{ discovery.target_audience }}
+
+Kärnfunktioner:
+{% for f in discovery.core_features %}- {{ f.name }}: {{ f.rationale }}
+{% endfor %}
+Funktionella krav:
+{% for r in discovery.functional_requirements %}- {{ r }}
+{% endfor %}
+Utanför scope (bygg INTE epics för dessa):
+{% for o in discovery.out_of_scope %}- {{ o }}
+{% endfor %}
+Producera en faserad roadmap och epics. Varje epics phase ska finnas i roadmapen.
