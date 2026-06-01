@@ -13,11 +13,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-# Behörigheter som GITHUB_TOKEN ger jobbet — räcker för att posta granskningen.
+# Behörigheter jobbet behöver. id-token: write krävs av action:et för att hämta en
+# OIDC-token; de övriga låter det posta granskningen.
 permissions:
   contents: read
   pull-requests: write
   issues: write
+  id-token: write
 
 # Avbryt en pågående granskning om en ny push kommer på samma PR (sparar tokens).
 concurrency:
