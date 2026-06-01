@@ -1,0 +1,17 @@
+Planera sprintar för projektet.
+
+Teamstorlek: {{ sprint_input.team_size }}
+Sprintlängd: {{ sprint_input.sprint_length_weeks }} veckor
+GIVEN kapacitet per sprint: {{ capacity }} story points (använd detta exakt)
+
+Epics och prioritet (för ordning):
+{% for e in epics %}- [{{ e.priority.value }}] {{ e.title }}
+{% endfor %}
+Tasks att fördela (titel · typ · estimat), grupperade per epic:
+{% for bd in breakdowns %}
+{{ bd.epic_title }}:
+{% for s in bd.stories %}{% for t in s.tasks %}  - {{ t.title }} · {{ t.type.value }} · {{ t.estimate }}p
+{% endfor %}{% endfor %}{% endfor %}
+Fördela tasks över sprintar i beroende- och prioritetsordning. Summan av estimat per
+sprint får inte överstiga {{ capacity }}. Sätt capacity_points = {{ capacity }} i varje
+sprint och namnge dem "Sprint 1", "Sprint 2", ...

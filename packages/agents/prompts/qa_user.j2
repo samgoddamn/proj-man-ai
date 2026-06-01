@@ -1,0 +1,10 @@
+Ta fram teststrategi och testfall för följande user stories.
+
+{% for bd in breakdowns %}
+Epic: {{ bd.epic_title }}
+{% for s in bd.stories %}- Som {{ s.role }} vill jag {{ s.want }} så att {{ s.so_that }}
+  Acceptanskriterier:
+{% for ac in s.acceptance_criteria %}    * {{ ac }}
+{% endfor %}{% endfor %}{% endfor %}
+Producera en strategy och test_cases. Bind varje testfall till rätt story via
+story_role och härled stegen ur acceptanskriterierna.

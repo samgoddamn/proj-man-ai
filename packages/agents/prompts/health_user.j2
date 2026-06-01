@@ -1,0 +1,16 @@
+Analysera projektets hälsa utifrån plan, nedbrytning och sprintplanering.
+
+Epics:
+{% for e in plan.epics %}- [{{ e.priority.value }}] {{ e.title }} (fas {{ e.phase }})
+{% endfor %}
+Tasks per epic (titel · estimat):
+{% for bd in breakdowns %}
+{{ bd.epic_title }}:
+{% for s in bd.stories %}{% for t in s.tasks %}  - {{ t.title }} · {{ t.estimate }}p
+{% endfor %}{% endfor %}{% endfor %}
+Sprintplanering:
+{% for sp in sprint_plan.sprints %}- {{ sp.name }} (kapacitet {{ sp.capacity_points }}p): {{ sp.task_titles | join("; ") }}
+{% endfor %}
+Identifiera risker (med severity, affected_epics, recommendation) och
+overloaded_sprints. Jämför inplanerade estimat mot kapacitet för att hitta
+överbelastning, och peka ut tvärgående beroenden.

@@ -1,10 +1,28 @@
-.DS_Store
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
 
+# Node / Next.js
 node_modules/
 .next/
+out/
+.turbo/
+npm-debug.log*
+*.tsbuildinfo
 
+# Claude Code lokal maskinkonfig (delad settings.json får spåras)
+.claude/settings.local.json
+
+# Miljö & hemligheter
 .env
-.env.*
-!.env.example
+.env.local
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
