@@ -45,7 +45,12 @@ from app.models import (
 )
 
 QUEUE_KEY = "gen:queue"
-_redis = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+_BLPOP_TIMEOUT = 30  # seconds; reconnects naturally each cycle
+_redis = redis.from_url(
+    os.getenv("REDIS_URL", "redis://localhost:6379"),
+    socket_timeout=_BLPOP_TIMEOUT + 5,
+    socket_connect_timeout=5,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -214,7 +219,15 @@ async def handle_job(job: dict) -> None:
 async def main() -> None:
     print("worker: väntar på jobb på", QUEUE_KEY)
     while True:
-        _, raw = await _redis.blpop(QUEUE_KEY)
+        try:
+            result = await _redis.blpop(QUEUE_KEY, timeout=_BLPOP_TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            print(f"worker: Redis-anslutningsfel: {e}. Försöker igen om 5s...")
+            await asyncio.sleep(5)
+            continue
+        if result is None:
+            continue  # blpop-timeout, ingen loop-paus behövs
+        _, raw = result
         job = json.loads(raw)
         try:
             await handle_job(job)
