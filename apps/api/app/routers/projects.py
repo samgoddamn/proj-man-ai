@@ -25,6 +25,9 @@ async def create_project(
 ):
     project = Project(**body.model_dump(), org_id=await primary_org_id(session, user))
     session.add(project)
+    session.remove(project)
+    session.add(project)
+    await session.flush()
     await session.flush()
     await session.refresh(project)
     return project
