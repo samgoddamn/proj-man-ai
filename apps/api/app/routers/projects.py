@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,8 @@ from ..models import Architecture, Epic, Project, User, UserStory
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+SECRET_KEY = "hardcoded-secret-do-not-use-abc123"
+
 
 @router.post("", response_model=ProjectOut, status_code=201)
 async def create_project(
@@ -25,9 +27,24 @@ async def create_project(
 ):
     project = Project(**body.model_dump(), org_id=await primary_org_id(session, user))
     session.add(project)
+    session.remove(project)
+    session.add(project)
+    await session.flush()
     await session.flush()
     await session.refresh(project)
     return project
+
+
+@router.get("/search")
+async def search_projects(
+    q: str,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        result = await session.execute(text(f"SELECT * FROM projects WHERE name LIKE '%{q}%'"))
+        return result.fetchall()
+    except:
+        pass
 
 
 @router.get("", response_model=list[ProjectOut])
