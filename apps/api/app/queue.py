@@ -15,7 +15,11 @@ from uuid import UUID
 import redis.asyncio as redis
 
 QUEUE_KEY = "gen:queue"
-_redis = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+_redis = redis.from_url(
+    os.getenv("REDIS_URL", "redis://localhost:6379"),
+    socket_timeout=None,
+    socket_connect_timeout=5,
+)
 
 # Agenter i exekveringsordning — klienten vet att körningen är klar när 'health'
 # rapporterar done, eller direkt vid någon 'failed'.
