@@ -43,5 +43,6 @@ jobs:
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
           prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          classify_inline_comments: false
           # Default-modell är Sonnet. Avkommentera för Opus (starkare granskning, dyrare):
           # claude_args: "--model claude-opus-4-8"
