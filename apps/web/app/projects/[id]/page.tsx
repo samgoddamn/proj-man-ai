@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/useRequireAuth";
@@ -13,18 +13,46 @@ type Tab = (typeof TABS)[number];
 
 export default function ProjectPage() {
   const ready = useRequireAuth();
+  const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("Roadmap");
+  const [rerunning, setRerunning] = useState(false);
 
   useEffect(() => {
     if (ready) api.getProject(id).then(setProject).catch((e) => setError(String(e)));
   }, [ready, id]);
 
+  async function handleRerun() {
+    setRerunning(true);
+    try {
+      await api.generate(id, {
+        team_size: 3,
+        sprint_length_weeks: 2,
+        velocity_per_dev: 8,
+      });
+      router.push(`/projects/${id}/generating`);
+    } catch (e) {
+      setError(String(e));
+      setRerunning(false);
+    }
+  }
+
   if (!ready) return null;
   if (error) return <Card className="text-red-600">{error}</Card>;
   if (!project) return <p className="text-slate-500">Laddar…</p>;
+
+  const hasNoContent =
+    project.roadmaps.length === 0 &&
+    project.epics.length === 0 &&
+    project.sprints.length === 0 &&
+    project.risks.length === 0 &&
+    project.architecture == null;
+
+  const canRerun =
+    project.status === "failed" ||
+    (project.status === "ready" && hasNoContent);
 
   return (
     <div className="space-y-6">
@@ -33,8 +61,13 @@ export default function ProjectPage() {
           <h1 className="text-2xl font-bold">{project.name}</h1>
           <p className="mt-1 max-w-2xl text-slate-600">{project.description}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-end gap-2">
           <Badge tone={project.status === "ready" ? "low" : "medium"}>{project.status}</Badge>
+          {canRerun && (
+            <Button onClick={handleRerun} disabled={rerunning}>
+              {rerunning ? "Startar…" : "Kör om"}
+            </Button>
+          )}
           <Link href={`/projects/${id}/kanban`}>
             <Button variant="ghost">Kanban →</Button>
           </Link>
