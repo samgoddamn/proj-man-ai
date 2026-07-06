@@ -34,6 +34,26 @@ fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
+pick_python() {
+  local candidate=""
+  for candidate in "${PYTHON_BIN:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON_CMD="$(pick_python || true)"
+if [[ -z "$PYTHON_CMD" ]]; then
+  echo "✗ Hittar ingen kompatibel Python (kräver >= 3.10 för github-copilot-sdk)." >&2
+  exit 1
+fi
+
 OUTPUT="${OUTPUT_ARG:-$ROOT/team_output}"
 LOG_FILE="$(mktemp)"
 trap 'rm -f "$LOG_FILE"' EXIT
@@ -53,18 +73,19 @@ if [[ -z "$COPILOT_CLI_PATH" || ! -x "$COPILOT_CLI_PATH" ]]; then
   exit 1
 fi
 
-if ! python3 -c 'import copilot' >/dev/null 2>&1; then
+if ! "$PYTHON_CMD" -c 'import copilot' >/dev/null 2>&1; then
   echo "✗ Python-paketet github-copilot-sdk saknas i nuvarande miljö." >&2
-  echo "  Installera med: pip install -r requirements.txt" >&2
+  echo "  Installera med: $PYTHON_CMD -m pip install -r requirements.txt" >&2
   exit 1
 fi
 
 echo "▶  Kör team.py via GitHub Copilot SDK…"
 echo "   Feature: $SLUG"
 echo "   Output:  $OUTPUT"
+echo "   Python:  $PYTHON_CMD"
 echo "   CLI:     $COPILOT_CLI_PATH"
 
-python3 "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL" | tee "$LOG_FILE"
+"$PYTHON_CMD" "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL" | tee "$LOG_FILE"
 
 if grep -q "Access denied by policy settings" "$LOG_FILE"; then
   echo "✗ Copilot CLI blockerades av policy. Ingen feature genererades." >&2

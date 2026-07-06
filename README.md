@@ -111,7 +111,7 @@ anpassade till det här monorepots stack (FastAPI i `apps/api`, Next.js i `apps/
 
 **Smidigaste vägen — ett kommando som bygger featuren OCH öppnar en PR:**
 ```bash
-pip install -r requirements.txt
+python3.12 -m pip install -r requirements.txt
 export COPILOT_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
 scripts/feature.sh <branch-namn> "<mål för featuren>"
 
@@ -124,8 +124,8 @@ Skriptet skapar `feat/<namn>` från `main`, kör agent-teamet (som skriver direk
 
 **Köra teamet utan git-flödet** (skriver till en sandlåda i stället):
 ```bash
-python3 team.py --output ./team_output "Bygg X"
-python3 team.py                              # interaktivt läge
+python3.12 team.py --output ./team_output "Bygg X"
+python3.12 team.py                              # interaktivt läge
 ```
 
 **Köra `team.py` via GitHub Copilot SDK**
@@ -137,15 +137,15 @@ python3 team.py                              # interaktivt läge
 Snabbaste sättet att verifiera att SDK + CLI fungerar innan du kör hela teamet:
 
 ```bash
-python3 scripts/copilot-sdk-smoke-test.py
+python3.12 scripts/copilot-sdk-smoke-test.py
 ```
 
 Grundkonfiguration:
 
 ```bash
-pip install -r requirements.txt
+python3.12 -m pip install -r requirements.txt
 export COPILOT_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
-python3 team.py --output ./team_output "Bygg X"
+python3.12 team.py --output ./team_output "Bygg X"
 ```
 
 Enklaste vägen lokalt är hjälpskriptet:

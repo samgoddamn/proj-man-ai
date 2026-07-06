@@ -30,6 +30,26 @@ fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
+pick_python() {
+  local candidate=""
+  for candidate in "${PYTHON_BIN:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON_CMD="$(pick_python || true)"
+if [[ -z "$PYTHON_CMD" ]]; then
+  echo "✗ Hittar ingen kompatibel Python (kräver >= 3.10 för github-copilot-sdk)." >&2
+  exit 1
+fi
+
 DEFAULT_CLI_PATH="$(command -v copilot || true)"
 if [[ -z "$DEFAULT_CLI_PATH" ]]; then
   VSCODE_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
@@ -45,9 +65,9 @@ if [[ -z "$COPILOT_CLI_PATH" || ! -x "$COPILOT_CLI_PATH" ]]; then
   exit 1
 fi
 
-if ! python3 -c 'import copilot' >/dev/null 2>&1; then
+if ! "$PYTHON_CMD" -c 'import copilot' >/dev/null 2>&1; then
   echo "✗ Python-paketet github-copilot-sdk saknas i nuvarande miljö." >&2
-  echo "  Installera med: pip install -r requirements.txt" >&2
+  echo "  Installera med: $PYTHON_CMD -m pip install -r requirements.txt" >&2
   exit 1
 fi
 
@@ -69,7 +89,7 @@ git switch -c "$BRANCH"
 
 # 3. Kör agent-teamet, skriv direkt in i monorepot.
 echo "▶  Kör agent-teamet…"
-python3 "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
+"$PYTHON_CMD" "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
 
 # Inget genererat? Avbryt utan tom commit.
 if [[ -z "$(git status --porcelain)" ]]; then
