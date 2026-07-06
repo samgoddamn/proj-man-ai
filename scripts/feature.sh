@@ -16,7 +16,7 @@
 #   4. Committar resultatet (med Co-Authored-By-trailer).
 #   5. Pushar branchen och öppnar en pull request mot main (om gh finns).
 #
-# Kräver: ANTHROPIC_API_KEY satt. För PR-steget: gh CLI inloggad + git-remote.
+# Kräver: GitHub Copilot CLI + github-copilot-sdk installerat. För PR-steget: gh CLI inloggad + git-remote.
 
 set -euo pipefail
 
@@ -29,6 +29,27 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+
+DEFAULT_CLI_PATH="$(command -v copilot || true)"
+if [[ -z "$DEFAULT_CLI_PATH" ]]; then
+  VSCODE_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
+  if [[ -x "$VSCODE_CLI_PATH" ]]; then
+    DEFAULT_CLI_PATH="$VSCODE_CLI_PATH"
+  fi
+fi
+
+export COPILOT_CLI_PATH="${COPILOT_CLI_PATH:-$DEFAULT_CLI_PATH}"
+
+if [[ -z "$COPILOT_CLI_PATH" || ! -x "$COPILOT_CLI_PATH" ]]; then
+  echo "✗ Hittar ingen Copilot CLI-binär. Sätt COPILOT_CLI_PATH manuellt." >&2
+  exit 1
+fi
+
+if ! python3 -c 'import copilot' >/dev/null 2>&1; then
+  echo "✗ Python-paketet github-copilot-sdk saknas i nuvarande miljö." >&2
+  echo "  Installera med: pip install -r requirements.txt" >&2
+  exit 1
+fi
 
 # 1. Rent arbetsträd krävs — annars blandas opågående ändringar in i committen.
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -48,7 +69,7 @@ git switch -c "$BRANCH"
 
 # 3. Kör agent-teamet, skriv direkt in i monorepot.
 echo "▶  Kör agent-teamet…"
-python "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
+python3 "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
 
 # Inget genererat? Avbryt utan tom commit.
 if [[ -z "$(git status --porcelain)" ]]; then

@@ -111,7 +111,8 @@ anpassade till det här monorepots stack (FastAPI i `apps/api`, Next.js i `apps/
 
 **Smidigaste vägen — ett kommando som bygger featuren OCH öppnar en PR:**
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+pip install -r requirements.txt
+export COPILOT_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
 scripts/feature.sh <branch-namn> "<mål för featuren>"
 
 # exempel
@@ -123,23 +124,21 @@ Skriptet skapar `feat/<namn>` från `main`, kör agent-teamet (som skriver direk
 
 **Köra teamet utan git-flödet** (skriver till en sandlåda i stället):
 ```bash
-python team.py --output ./team_output "Bygg X"
-python team.py                              # interaktivt läge
+python3 team.py --output ./team_output "Bygg X"
+python3 team.py                              # interaktivt läge
 ```
 
-**Köra `team.py` via lokal Copilot CLI-wrapper**
+**Köra `team.py` via GitHub Copilot SDK**
 
-Om du vill köra `team.py` utan Anthropic/OpenAI-API direkt kan du använda den
-lokala wrappern i [scripts/copilot-wrapper.py](scripts/copilot-wrapper.py), som
-normaliserar CLI-output till repoets JSON-protokoll i
-[docs/copilot-cli-protocol.md](docs/copilot-cli-protocol.md).
+`team.py` använder nu GitHub Copilot Python SDK direkt. Du behöver:
+- `github-copilot-sdk` installerat i din Python-miljö
+- en lokal Copilot CLI-binär tillgänglig via `COPILOT_CLI_PATH` eller `PATH`
 
 Grundkonfiguration:
 
 ```bash
-export COPILOT_CMD="./scripts/copilot-wrapper.py"
-export COPILOT_WRAPPER_BACKEND="gh"
-export COPILOT_WRAPPER_ARGS="copilot -p"
+pip install -r requirements.txt
+export COPILOT_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
 python3 team.py --output ./team_output "Bygg X"
 ```
 
@@ -153,18 +152,9 @@ scripts/run-team-local.sh notes-api "Bygg ett CRUD-API för anteckningar" .
 Det tredje argumentet är valfritt output-path. Använd `.` för att skriva direkt i
 repot, annars används `./team_output`.
 
-För lokal testning utan riktig backend kan du mocka svaret:
-
-```bash
-export COPILOT_CMD="./scripts/copilot-wrapper.py"
-export COPILOT_WRAPPER_MOCK_RESPONSE='[{"type":"text","text":"ok"}]'
-scripts/run-team-local.sh test-feature "Bygg X"
-```
-
 Begränsning:
-- Om `gh copilot` blockeras av organisationspolicy eller saknar rättigheter kommer
-  wrappern inte kunna köra end-to-end mot Copilot-tjänsten. I det läget fungerar
-  mock-läget fortfarande för lokal verifiering av wrapperflödet.
+- Om Copilot CLI blockeras av organisationspolicy eller saknar rättigheter kommer
+  SDK-körningen inte kunna skapa features end-to-end.
 
 > ⚠️ Agenterna har bara fil-verktyg — de kör inte bygg/tester. Granska PR:en och kör
 > verifieringen (`npx tsc --noEmit && npm run build`, `py_compile`/tester) **innan**

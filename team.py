@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
 """
 Multi-Agent Engineering Team
-─────────────────────────────
+-----------------------------
 You prompt the Orchestrator with a goal.
-It breaks the work down and dispatches specialized sub-agents in parallel.
+It breaks the work down and dispatches specialized sub-agents.
 
 Agents
-  🏗️  architect  — designs system, writes ARCHITECTURE.md
-  🎨  frontend   — React/TypeScript components and hooks
-  ⚙️  backend    — API routes, services, data models
-  🔍  reviewer   — finds bugs & security issues, writes REVIEW.md
+  architect  - designs system, writes plan docs
+  frontend   - React/TypeScript components and hooks
+  backend    - API routes, services, data models
+  reviewer   - finds bugs and security issues, writes review docs
 
 Usage
-  python team.py "Build a user auth system with login and signup"
-  python team.py --output ./src "Add a dark-mode toggle"
-  python team.py                             # interactive mode
+  python3 team.py "Build a user auth system with login and signup"
+  python3 team.py --output ./src "Add a dark-mode toggle"
+  python3 team.py                             # interactive mode
 """
 
-import os
-from llm_adapter import send_request
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import os
 from pathlib import Path
+from typing import Any
 
-# ── Shared state ──────────────────────────────────────────────────────────────
+from copilot import CopilotClient, PermissionHandler, define_tool
 
 output_dir: Path = Path("./team_output").resolve()
-feature_slug: str = "feature"  # sätts från --feature; används för doc-sökvägar
-
-# ── Projektkontext (vävs in i varje agents prompt) ───────────────────────────
+feature_slug: str = "feature"
+default_model: str = os.environ.get("TEAM_MODEL", "gpt-5")
+subagent_model: str = os.environ.get("TEAM_SUBAGENT_MODEL", default_model)
 
 PROJECT_CONTEXT = """\
 ## Project context — you work INSIDE an existing monorepo, not a blank slate
@@ -45,7 +45,7 @@ Repo layout (paths are relative to the output root, which is the repo root):
                    Session dep: apps/api/app/db.py (get_session)
                    Auth deps:   apps/api/app/deps.py (get_current_user, ensure_project_access)
 - packages/agents/ LangGraph-pipeline. Do NOT modify unless the task is about it.
-- alembic/         DB-migrationer. Nya/ändrade modeller kräver en migration i alembic/versions/.
+- alembic/         DB-migrationer. Nya/andrade modeller kraver en migration i alembic/versions/.
 
 Rules for everyone:
 - Read neighbouring files first (read_file / list_directory) and MATCH existing
@@ -54,8 +54,6 @@ Rules for everyone:
 - NEVER overwrite root ARCHITECTURE.md, README.md or CLAUDE.md.
 - Skip node_modules/.next/.venv — never read or write there.
 """
-
-# ── File tools (every agent gets these) ──────────────────────────────────────
 
 FILE_TOOLS = [
     {
@@ -114,7 +112,6 @@ def _read_file(path: str) -> str:
     return full.read_text(encoding="utf-8") if full.exists() else f"Error: {path} not found"
 
 
-# Tunga mappar som aldrig ska listas/genomsökas (sparar tokens, undviker brus).
 _IGNORE_DIRS = {"node_modules", ".next", ".git", ".venv", "venv", "__pycache__", "team_output"}
 
 
@@ -122,34 +119,104 @@ def _list_directory(path: str = ".") -> str:
     full = output_dir / path
     if not full.exists():
         return f"Error: {path} not found"
-    entries = sorted(full.iterdir(), key=lambda p: (p.is_file(), p.name))
+    entries = sorted(full.iterdir(), key=lambda item: (item.is_file(), item.name))
     lines = [
-        ("  " if e.is_file() else "D ") + e.name
-        for e in entries
-        if e.name not in _IGNORE_DIRS
+        ("  " if entry.is_file() else "D ") + entry.name
+        for entry in entries
+        if entry.name not in _IGNORE_DIRS
     ]
     return "\n".join(lines) if lines else "(empty)"
 
 
-_FILE_HANDLERS = {
-    "write_file": lambda i: _write_file(i["path"], i["content"]),
-    "read_file": lambda i: _read_file(i["path"]),
-    "list_directory": lambda i: _list_directory(i.get("path", ".")),
-}
+def _build_file_tools(role: str) -> list[Any]:
+    async def write_file_handler(args: dict[str, Any], _invocation: Any) -> str:
+        result = _write_file(args["path"], args["content"])
+        print(f"  [{role}] wrote {args['path']}")
+        return result
+
+    async def read_file_handler(args: dict[str, Any], _invocation: Any) -> str:
+        return _read_file(args["path"])
+
+    async def list_directory_handler(args: dict[str, Any], _invocation: Any) -> str:
+        return _list_directory(args.get("path", "."))
+
+    return [
+        define_tool(
+            name="write_file",
+            description=FILE_TOOLS[0]["description"],
+            parameters=FILE_TOOLS[0]["input_schema"],
+            handler=write_file_handler,
+        ),
+        define_tool(
+            name="read_file",
+            description=FILE_TOOLS[1]["description"],
+            parameters=FILE_TOOLS[1]["input_schema"],
+            handler=read_file_handler,
+        ),
+        define_tool(
+            name="list_directory",
+            description=FILE_TOOLS[2]["description"],
+            parameters=FILE_TOOLS[2]["input_schema"],
+            handler=list_directory_handler,
+        ),
+    ]
 
 
-def execute_file_tool(name: str, inp: dict) -> str:
+def _client_config() -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "use_stdio": True,
+        "auto_start": True,
+        "auto_restart": True,
+        "cwd": str(Path.cwd()),
+    }
+    if os.environ.get("COPILOT_CLI_PATH"):
+        config["cli_path"] = os.environ["COPILOT_CLI_PATH"]
+    if os.environ.get("COPILOT_CLI_URL"):
+        config["cli_url"] = os.environ["COPILOT_CLI_URL"]
+    return config
+
+
+def _session_config(model: str, tools: list[Any], system_content: str) -> dict[str, Any]:
+    return {
+        "on_permission_request": PermissionHandler.approve_all,
+        "model": model,
+        "tools": tools,
+        "system_message": {
+            "mode": "append",
+            "content": system_content,
+        },
+    }
+
+
+async def _send_prompt_and_collect(session: Any, prompt: str) -> str:
+    done = asyncio.Event()
+    assistant_messages: list[str] = []
+    session_errors: list[str] = []
+
+    def handler(event: Any) -> None:
+        if event.type == "assistant.message":
+            assistant_messages.append(event.data.content)
+        elif event.type == "session.error":
+            session_errors.append(getattr(event.data, "message", str(event.data)))
+            done.set()
+        elif event.type == "session.idle":
+            done.set()
+
+    unsubscribe = session.on(handler)
     try:
-        return _FILE_HANDLERS[name](inp)
-    except Exception as e:
-        return f"Error: {e}"
+        await session.send({"prompt": prompt})
+        await done.wait()
+    finally:
+        unsubscribe()
 
+    if session_errors:
+        raise RuntimeError(session_errors[-1])
 
-# ── Agent profiles ────────────────────────────────────────────────────────────
+    return assistant_messages[-1] if assistant_messages else ""
+
 
 AGENTS = {
     "architect": {
-        "emoji": "🏗️",
         "description": "Plans system design, file structure, API contracts, and data models",
         "system": """\
 You are the Architect. You design before anyone builds.
@@ -169,7 +236,6 @@ Rules:
 """,
     },
     "frontend": {
-        "emoji": "🎨",
         "description": "Builds React components, custom hooks, and UI logic",
         "system": """\
 You are the Frontend Developer. You build production-quality React/TypeScript UI.
@@ -181,31 +247,29 @@ Responsibilities:
 - Check ARCHITECTURE.md first if it exists — follow the plan
 
 Conventions (this repo's real paths):
-- Pages       → apps/web/app/<route>/page.tsx  ("use client" + useRequireAuth för skyddade sidor)
-- Components   → apps/web/components/<Feature>/...
-- Hooks/utils  → apps/web/lib/use<Name>.ts
-- API-anrop    → använd apps/web/lib/api.ts (lägg till metoder där, bifogar JWT automatiskt)
-- UI           → återanvänd apps/web/components/ui/primitives.tsx (Button, Card, Field, Input…)
+- Pages       -> apps/web/app/<route>/page.tsx  ("use client" + useRequireAuth for protected pages)
+- Components  -> apps/web/components/<Feature>/...
+- Hooks/utils -> apps/web/lib/use<Name>.ts
+- API calls   -> use apps/web/lib/api.ts (add methods there, it attaches JWT automatically)
+- UI          -> reuse apps/web/components/ui/primitives.tsx
 
 Rules:
 - Never skip error states or loading states
 - Keep each file focused — no 500-line components
 - Use TypeScript strictly — no `any`
-- Match the existing client-side fetch-pattern; bygg inte en parallell datahämtning
+- Match the existing client-side fetch pattern; do not invent a parallel data layer
 """,
     },
     "backend": {
-        "emoji": "⚙️",
         "description": "Builds API routes, services, and data access layers",
         "system": """\
 You are the Backend Developer. You build robust, secure FastAPI (Python 3.12) code.
 
 Responsibilities:
 - Add/extend FastAPI routers (APIRouter) in apps/api/app/routers/<resource>.py
-- Define request/response DTOs in apps/api/app/dto.py (Pydantic v2; from_attributes
-  för ORM-serialisering)
+- Define request/response DTOs in apps/api/app/dto.py (Pydantic v2; from_attributes for ORM serialization)
 - Add SQLAlchemy 2.0 models to apps/api/app/models.py when persistence is needed,
-  AND a matching Alembic migration in alembic/versions/ (följ formatet i 0002_auth.py)
+  AND a matching Alembic migration in alembic/versions/ (follow the format in 0002_auth.py)
 - Use the get_session dependency (apps/api/app/db.py) and auth deps
   (apps/api/app/deps.py: get_current_user, ensure_project_access) to protect and
   org-scope routes
@@ -213,19 +277,18 @@ Responsibilities:
 - Check docs/plans/<feature-slug>.md first if it exists — follow the plan
 
 Conventions (this repo's real paths):
-- Routers → apps/api/app/routers/<resource>.py
-- DTOs    → apps/api/app/dto.py
-- Models  → apps/api/app/models.py  (+ alembic/versions/ migration)
+- Routers -> apps/api/app/routers/<resource>.py
+- DTOs    -> apps/api/app/dto.py
+- Models  -> apps/api/app/models.py (+ alembic/versions/ migration)
 
 Rules:
-- Async SQLAlchemy throughout (matcha mönstren i befintliga routrar/modeller)
+- Async SQLAlchemy throughout
 - Validate all inputs with Pydantic — never trust user data
 - Return consistent error shapes via HTTPException
 - No secrets hardcoded — use os.environ
 """,
     },
     "reviewer": {
-        "emoji": "🔍",
         "description": "Reviews code for bugs, security issues, and improvements",
         "system": """\
 You are the Code Reviewer. You find real bugs, not style nitpicks.
@@ -239,7 +302,7 @@ Responsibilities:
 Rules:
 - Only review this feature's files — do NOT crawl the whole repo, node_modules or .next
 - Quote the specific code that has a problem
-- Explain *why* it's a problem
+- Explain why it's a problem
 - For Critical/Major issues, show the fix
 - Don't rewrite files — write docs/reviews/<feature-slug>.md only
 - Skip pure style/naming preferences unless they cause confusion
@@ -247,72 +310,11 @@ Rules:
     },
 }
 
-# ── Sub-agent runner ──────────────────────────────────────────────────────────
-
-
-def run_subagent(role: str, task: str, context: str = "") -> str:
-    """Run a sub-agent to completion and return its final summary."""
-    profile = AGENTS.get(role)
-    if not profile:
-        return f"Error: unknown role '{role}'. Choose from: {', '.join(AGENTS)}"
-
-    emoji = profile["emoji"]
-    print(f"  {emoji}  [{role}] ▶  {task[:70]}{'…' if len(task) > 70 else ''}")
-
-    system = (
-        profile["system"]
-        + "\n\n"
-        + PROJECT_CONTEXT
-        + f"\n\nFeature slug for doc paths: `{feature_slug}` "
-        f"(plan → docs/plans/{feature_slug}.md, review → docs/reviews/{feature_slug}.md)"
-    )
-    if context:
-        system += f"\n\n## Context from orchestrator\n{context}"
-
-    messages = [{"role": "user", "content": task}]
-
-    while True:
-        # Send prompt to local Copilot CLI via llm_adapter.send_request
-        response = send_request(system=system, messages=messages, tools=FILE_TOOLS, max_tokens=16000)
-
-        # Done — extract final text
-        if response.stop_reason == "end_turn":
-            summary = next((b.text for b in response.content if b.type == "text"), "(no summary)")
-            print(f"  {emoji}  [{role}] ✓  Done")
-            return summary
-
-        tool_blocks = [b for b in response.content if b.type == "tool_use"]
-        if not tool_blocks:
-            return next((b.text for b in response.content if b.type == "text"), "(done)")
-
-        # Execute all tool calls and collect results
-        messages.append({"role": "assistant", "content": response.content})
-        tool_results = []
-        for tb in tool_blocks:
-            result = execute_file_tool(tb.name, tb.input)
-            if tb.name == "write_file":
-                print(f"  {emoji}  [{role}]    wrote {tb.input['path']}")
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tb.id,
-                "content": result,
-            })
-        messages.append({"role": "user", "content": tool_results})
-
-
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
 DISPATCH_TOOL = {
     "name": "dispatch_agent",
     "description": (
         "Assign a task to a specialist sub-agent. "
-        "Call this multiple times in a single response to run agents in parallel. "
-        "All agents share the same output directory and can read each other's files.\n\n"
-        "Available roles:\n"
-        + "\n".join(
-            f"  {p['emoji']} {role}: {p['description']}"
-            for role, p in AGENTS.items()
-        )
+        "Call it once per sub-task. All agents share the same output directory and can read each other's files."
     ),
     "input_schema": {
         "type": "object",
@@ -324,17 +326,11 @@ DISPATCH_TOOL = {
             },
             "task": {
                 "type": "string",
-                "description": (
-                    "Clear, specific task for this agent. "
-                    "Include what files to create and any important constraints."
-                ),
+                "description": "Clear, specific task for this agent.",
             },
             "context": {
                 "type": "string",
-                "description": (
-                    "Optional context this agent needs: design decisions, "
-                    "data shapes, constraints from other agents."
-                ),
+                "description": "Optional context this agent needs.",
             },
         },
         "required": ["role", "task"],
@@ -342,7 +338,7 @@ DISPATCH_TOOL = {
 }
 
 _AGENT_LIST = "\n".join(
-    f"- **{role}** ({p['emoji']}): {p['description']}" for role, p in AGENTS.items()
+    f"- {role}: {profile['description']}" for role, profile in AGENTS.items()
 )
 
 ORCHESTRATOR_SYSTEM = f"""\
@@ -352,12 +348,12 @@ Your team:
 {_AGENT_LIST}
 
 How to work:
-1. Think through what the feature needs (use thinking before dispatching)
-2. Dispatch agents with dispatch_agent — you can call it multiple times in one response to run in parallel
+1. Think through what the feature needs before dispatching
+2. Use the dispatch_agent tool to assign specific tasks
 3. Typical flow for complex features:
-   - architect first (system design + ARCHITECTURE.md)
-   - then frontend + backend simultaneously
-   - reviewer last (after all code is written)
+   - architect first
+   - then frontend + backend
+   - reviewer last
 4. For simple features, skip architect and dispatch directly to frontend/backend
 5. When all work is done, summarize what was built
 
@@ -368,68 +364,92 @@ Rules:
 """
 
 
-def run_orchestrator(goal: str) -> str:
-    """Run the orchestrator until it finishes, then return the summary."""
-    print(f"\n🎯  {goal}\n{'─' * 60}")
+async def run_subagent(client: CopilotClient, role: str, task: str, context: str = "") -> str:
+    profile = AGENTS.get(role)
+    if not profile:
+        return f"Error: unknown role '{role}'. Choose from: {', '.join(AGENTS)}"
+
+    print(f"  [{role}] -> {task[:70]}{'...' if len(task) > 70 else ''}")
+
+    system_content = (
+        profile["system"]
+        + "\n\n"
+        + PROJECT_CONTEXT
+        + f"\n\nFeature slug for doc paths: `{feature_slug}` "
+        + f"(plan -> docs/plans/{feature_slug}.md, review -> docs/reviews/{feature_slug}.md)"
+    )
+    if context:
+        system_content += f"\n\n## Context from orchestrator\n{context}"
+
+    async with await client.create_session(
+        _session_config(subagent_model, _build_file_tools(role), system_content)
+    ) as session:
+        summary = await _send_prompt_and_collect(session, task)
+
+    print(f"  [{role}] done")
+    return summary or "(no summary)"
+
+
+async def run_orchestrator(client: CopilotClient, goal: str) -> str:
+    print(f"\nGoal: {goal}\n{'-' * 60}")
+
     orchestrator_system = (
         ORCHESTRATOR_SYSTEM
         + "\n\n"
         + PROJECT_CONTEXT
         + f"\n\nThis feature's slug is `{feature_slug}`. Pass it to agents so the "
-        f"architect writes docs/plans/{feature_slug}.md and the reviewer writes "
-        f"docs/reviews/{feature_slug}.md. Tell the reviewer exactly which files were created."
+        + f"architect writes docs/plans/{feature_slug}.md and the reviewer writes "
+        + f"docs/reviews/{feature_slug}.md. Tell the reviewer exactly which files were created."
     )
-    messages = [{"role": "user", "content": goal}]
 
-    while True:
-        # Send prompt to local Copilot CLI via llm_adapter.send_request
-        response = send_request(system=orchestrator_system, messages=messages, tools=[DISPATCH_TOOL], max_tokens=16000)
+    async def dispatch_handler(args: dict[str, Any], _invocation: Any) -> str:
+        return await run_subagent(client, args["role"], args["task"], args.get("context", ""))
 
-        # Orchestrator finished
-        if response.stop_reason == "end_turn":
-            return next((b.text for b in response.content if b.type == "text"), "(done)")
+    dispatch_tool = define_tool(
+        name=DISPATCH_TOOL["name"],
+        description=DISPATCH_TOOL["description"],
+        parameters=DISPATCH_TOOL["input_schema"],
+        handler=dispatch_handler,
+    )
 
-        dispatch_calls = [b for b in response.content if b.type == "tool_use"]
-        if not dispatch_calls:
-            return next((b.text for b in response.content if b.type == "text"), "(done)")
+    async with await client.create_session(
+        _session_config(default_model, [dispatch_tool], orchestrator_system)
+    ) as session:
+        summary = await _send_prompt_and_collect(session, goal)
 
-        messages.append({"role": "assistant", "content": response.content})
-
-        # Run sub-agents — parallel when multiple dispatches, sequential for one
-        if len(dispatch_calls) > 1:
-            print(f"\n  ⚡  Running {len(dispatch_calls)} agents in parallel…\n")
-            results: dict[str, str] = {}
-            with ThreadPoolExecutor(max_workers=len(dispatch_calls)) as pool:
-                future_to_id = {
-                    pool.submit(
-                        run_subagent,
-                        call.input["role"],
-                        call.input["task"],
-                        call.input.get("context", ""),
-                    ): call.id
-                    for call in dispatch_calls
-                }
-                for future, call_id in future_to_id.items():
-                    results[call_id] = future.result()
-            tool_results = [
-                {"type": "tool_result", "tool_use_id": call.id, "content": results[call.id]}
-                for call in dispatch_calls
-            ]
-        else:
-            call = dispatch_calls[0]
-            result = run_subagent(
-                call.input["role"],
-                call.input["task"],
-                call.input.get("context", ""),
-            )
-            tool_results = [
-                {"type": "tool_result", "tool_use_id": call.id, "content": result}
-            ]
-
-        messages.append({"role": "user", "content": tool_results})
+    return summary or "(done)"
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+async def main_async(args: argparse.Namespace) -> None:
+    global output_dir, feature_slug
+    output_dir = Path(args.output).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    feature_slug = args.feature
+
+    print(f"Output: {output_dir}")
+    print(f"Feature: {feature_slug}")
+
+    async with CopilotClient(_client_config()) as client:
+        if args.goal:
+            summary = await run_orchestrator(client, args.goal)
+            print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}")
+            return
+
+        print("\nMulti-agent team ready. Type a feature goal (or 'quit').\n")
+        while True:
+            try:
+                goal = input("goal> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nBye!")
+                break
+
+            if goal.lower() in {"quit", "exit", "q"}:
+                break
+            if not goal:
+                continue
+
+            summary = await run_orchestrator(client, goal)
+            print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}\n")
 
 
 def main() -> None:
@@ -437,53 +457,24 @@ def main() -> None:
         description="Multi-agent engineering team — orchestrator + specialists",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="\n".join(
-            f"  {p['emoji']}  {role:<12} {p['description']}" for role, p in AGENTS.items()
+            f"  {role:<12} {profile['description']}" for role, profile in AGENTS.items()
         ),
     )
+    parser.add_argument("goal", nargs="?", help="Feature to build (omit for interactive mode)")
     parser.add_argument(
-        "goal",
-        nargs="?",
-        help="Feature to build (omit for interactive mode)",
-    )
-    parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="./team_output",
-        help="Output directory (default: ./team_output; sätt till repo-roten för att "
-        "skriva direkt in i monorepot)",
+        help="Output directory (default: ./team_output; set to the repo root to write directly into the monorepo)",
     )
     parser.add_argument(
-        "--feature", "-f",
+        "--feature",
+        "-f",
         default="feature",
-        help="Kort slug för featuren (styr doc-sökvägar: docs/plans/<slug>.md m.fl.)",
+        help="Short feature slug controlling docs/plans/<slug>.md and docs/reviews/<slug>.md",
     )
     args = parser.parse_args()
-
-    global output_dir, feature_slug
-    output_dir = Path(args.output).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    feature_slug = args.feature
-    print(f"Output: {output_dir}")
-    print(f"Feature: {feature_slug}")
-
-    if args.goal:
-        summary = run_orchestrator(args.goal)
-        print(f"\n{'─' * 60}\n{summary}\n{'─' * 60}")
-        return
-
-    # Interactive mode
-    print("\nMulti-agent team ready. Type a feature goal (or 'quit').\n")
-    while True:
-        try:
-            goal = input("🎯  ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
-            break
-        if goal.lower() in ("quit", "exit", "q"):
-            break
-        if not goal:
-            continue
-        summary = run_orchestrator(goal)
-        print(f"\n{'─' * 60}\n{summary}\n{'─' * 60}\n")
+    asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":
