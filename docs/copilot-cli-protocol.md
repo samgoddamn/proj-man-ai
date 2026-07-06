@@ -177,13 +177,38 @@ Recommended wrapper interface
 - Environment variable:
 
 ```bash
-export COPILOT_CMD="./scripts/copilot-wrapper.sh"
+export COPILOT_CMD="./scripts/copilot-wrapper.py"
+export COPILOT_WRAPPER_BACKEND="gh"
+export COPILOT_WRAPPER_ARGS="copilot -p"
 ```
 
 - Wrapper contract:
   - stdin: full prompt from the adapter
   - stdout: JSON matching this document
   - stderr: optional diagnostics only
+
+Included wrapper
+----------------
+- This repo now includes [scripts/copilot-wrapper.py](/Users/samuellucas/Claude/apps/proj-man/scripts/copilot-wrapper.py).
+- Default behavior:
+  - backend executable: `gh`
+  - backend args: `copilot -p`
+  - prompt mode: `arg`
+- Useful env vars:
+
+```bash
+export COPILOT_CMD="./scripts/copilot-wrapper.py"
+export COPILOT_WRAPPER_BACKEND="gh"
+export COPILOT_WRAPPER_ARGS="copilot -p"
+export COPILOT_WRAPPER_PROMPT_MODE="arg"
+```
+
+- For local testing without calling a real backend:
+
+```bash
+export COPILOT_CMD="./scripts/copilot-wrapper.py"
+export COPILOT_WRAPPER_MOCK_RESPONSE='[{"type":"text","text":"ok"}]'
+```
 
 Why this protocol exists
 ------------------------
