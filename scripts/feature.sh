@@ -16,7 +16,7 @@
 #   4. Committar resultatet (med Co-Authored-By-trailer).
 #   5. Pushar branchen och öppnar en pull request mot main (om gh finns).
 #
-# Kräver: ANTHROPIC_API_KEY satt. För PR-steget: gh CLI inloggad + git-remote.
+# Kräver: GitHub Copilot CLI + github-copilot-sdk installerat. För PR-steget: gh CLI inloggad + git-remote.
 
 set -euo pipefail
 
@@ -29,6 +29,47 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+
+pick_python() {
+  local candidate=""
+  for candidate in "${PYTHON_BIN:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON_CMD="$(pick_python || true)"
+if [[ -z "$PYTHON_CMD" ]]; then
+  echo "✗ Hittar ingen kompatibel Python (kräver >= 3.10 för github-copilot-sdk)." >&2
+  exit 1
+fi
+
+DEFAULT_CLI_PATH="$(command -v copilot || true)"
+if [[ -z "$DEFAULT_CLI_PATH" ]]; then
+  VSCODE_CLI_PATH="$HOME/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot"
+  if [[ -x "$VSCODE_CLI_PATH" ]]; then
+    DEFAULT_CLI_PATH="$VSCODE_CLI_PATH"
+  fi
+fi
+
+export COPILOT_CLI_PATH="${COPILOT_CLI_PATH:-$DEFAULT_CLI_PATH}"
+
+if [[ -z "$COPILOT_CLI_PATH" || ! -x "$COPILOT_CLI_PATH" ]]; then
+  echo "✗ Hittar ingen Copilot CLI-binär. Sätt COPILOT_CLI_PATH manuellt." >&2
+  exit 1
+fi
+
+if ! "$PYTHON_CMD" -c 'import copilot' >/dev/null 2>&1; then
+  echo "✗ Python-paketet github-copilot-sdk saknas i nuvarande miljö." >&2
+  echo "  Installera med: $PYTHON_CMD -m pip install -r requirements.txt" >&2
+  exit 1
+fi
 
 # 1. Rent arbetsträd krävs — annars blandas opågående ändringar in i committen.
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -48,7 +89,7 @@ git switch -c "$BRANCH"
 
 # 3. Kör agent-teamet, skriv direkt in i monorepot.
 echo "▶  Kör agent-teamet…"
-python "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
+"$PYTHON_CMD" "$ROOT/team.py" --output "$ROOT" --feature "$SLUG" "$GOAL"
 
 # Inget genererat? Avbryt utan tom commit.
 if [[ -z "$(git status --porcelain)" ]]; then

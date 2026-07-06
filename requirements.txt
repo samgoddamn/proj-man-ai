@@ -16,3 +16,4 @@ bcrypt>=4.2
 langgraph>=0.2
 anthropic>=0.40
 openai>=1.50
+github-copilot-sdk
