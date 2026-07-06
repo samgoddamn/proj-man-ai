@@ -143,12 +143,22 @@ export COPILOT_WRAPPER_ARGS="copilot -p"
 python3 team.py --output ./team_output "Bygg X"
 ```
 
+Enklaste vägen lokalt är hjälpskriptet:
+
+```bash
+scripts/run-team-local.sh dark-mode "Lägg till en dark-mode-toggle i frontenden"
+scripts/run-team-local.sh notes-api "Bygg ett CRUD-API för anteckningar" .
+```
+
+Det tredje argumentet är valfritt output-path. Använd `.` för att skriva direkt i
+repot, annars används `./team_output`.
+
 För lokal testning utan riktig backend kan du mocka svaret:
 
 ```bash
 export COPILOT_CMD="./scripts/copilot-wrapper.py"
 export COPILOT_WRAPPER_MOCK_RESPONSE='[{"type":"text","text":"ok"}]'
-python3 team.py --output ./team_output "Bygg X"
+scripts/run-team-local.sh test-feature "Bygg X"
 ```
 
 Begränsning:
