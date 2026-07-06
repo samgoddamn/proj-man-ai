@@ -28,6 +28,11 @@ def _client_config() -> dict[str, object]:
     return {"connection": StdioRuntimeConnection(path=os.environ.get("COPILOT_CLI_PATH", "copilot"))}
 
 
+def _event_type_name(event: object) -> str:
+    event_type = getattr(event, "type", "")
+    return getattr(event_type, "value", event_type)
+
+
 async def main() -> int:
     cli_path = os.environ.get("COPILOT_CLI_PATH", "copilot")
     print(f"Using Copilot CLI: {cli_path}")
@@ -39,11 +44,11 @@ async def main() -> int:
 
             async with await client.create_session(
                 on_permission_request=PermissionHandler.approve_all,
-                model=os.environ.get("TEAM_MODEL", "gpt-5"),
+                model=os.environ.get("TEAM_MODEL", "auto"),
             ) as session:
                 event = await session.send_and_wait("Reply with exactly: sdk-ok", timeout=60.0)
 
-            if event and event.type == "assistant.message":
+            if event and _event_type_name(event) == "assistant.message":
                 print(f"Assistant reply: {event.data.content}")
                 return 0
 

@@ -34,7 +34,7 @@ except ImportError:
 
 output_dir: Path = Path("./team_output").resolve()
 feature_slug: str = "feature"
-default_model: str = os.environ.get("TEAM_MODEL", "gpt-5")
+default_model: str = os.environ.get("TEAM_MODEL", "auto")
 subagent_model: str = os.environ.get("TEAM_SUBAGENT_MODEL", default_model)
 
 PROJECT_CONTEXT = """\
@@ -214,6 +214,11 @@ def _render_runtime_error(exc: Exception) -> str:
     return "\n".join(lines)
 
 
+def _event_type_name(event: Any) -> str:
+    event_type = getattr(event, "type", "")
+    return getattr(event_type, "value", event_type)
+
+
 def _session_config(model: str, tools: list[Any], system_content: str) -> dict[str, Any]:
     return {
         "on_permission_request": PermissionHandler.approve_all,
@@ -232,12 +237,13 @@ async def _send_prompt_and_collect(session: Any, prompt: str) -> str:
     session_errors: list[str] = []
 
     def handler(event: Any) -> None:
-        if event.type == "assistant.message":
+        event_type = _event_type_name(event)
+        if event_type == "assistant.message":
             assistant_messages.append(event.data.content)
-        elif event.type == "session.error":
+        elif event_type == "session.error":
             session_errors.append(getattr(event.data, "message", str(event.data)))
             done.set()
-        elif event.type == "session.idle":
+        elif event_type == "session.idle":
             done.set()
 
     unsubscribe = session.on(handler)
