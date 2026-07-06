@@ -23,7 +23,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from copilot import CopilotClient, PermissionHandler, define_tool
+try:
+    from copilot import CopilotClient, PermissionHandler, define_tool
+except ImportError:
+    CopilotClient = None
+    PermissionHandler = None
+    define_tool = None
 
 output_dir: Path = Path("./team_output").resolve()
 feature_slug: str = "feature"
@@ -174,6 +179,32 @@ def _client_config() -> dict[str, Any]:
     if os.environ.get("COPILOT_CLI_URL"):
         config["cli_url"] = os.environ["COPILOT_CLI_URL"]
     return config
+
+
+def _cli_path() -> str:
+    return os.environ.get("COPILOT_CLI_PATH", "copilot")
+
+
+def _require_sdk_dependencies() -> None:
+    if CopilotClient is None or PermissionHandler is None or define_tool is None:
+        raise RuntimeError(
+            "Missing Python dependency 'github-copilot-sdk'. Install it with: pip install -r requirements.txt"
+        )
+
+
+def _render_runtime_error(exc: Exception) -> str:
+    message = str(exc)
+    lines = [f"Copilot SDK run failed: {message}"]
+
+    if "Access denied by policy settings" in message:
+        lines.append("Copilot CLI access is blocked by policy or subscription settings.")
+        lines.append("Check your Copilot settings: https://github.com/settings/copilot")
+    elif "No such file or directory" in message or "not found" in message.lower():
+        lines.append(f"Verify that COPILOT_CLI_PATH points to a valid Copilot CLI binary. Current value: {_cli_path()}")
+    elif "Missing Python dependency 'github-copilot-sdk'" in message:
+        lines.append("Install the SDK in the current Python environment before running team.py.")
+
+    return "\n".join(lines)
 
 
 def _session_config(model: str, tools: list[Any], system_content: str) -> dict[str, Any]:
@@ -421,6 +452,8 @@ async def run_orchestrator(client: CopilotClient, goal: str) -> str:
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    _require_sdk_dependencies()
+
     global output_dir, feature_slug
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -429,27 +462,30 @@ async def main_async(args: argparse.Namespace) -> None:
     print(f"Output: {output_dir}")
     print(f"Feature: {feature_slug}")
 
-    async with CopilotClient(_client_config()) as client:
-        if args.goal:
-            summary = await run_orchestrator(client, args.goal)
-            print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}")
-            return
+    try:
+        async with CopilotClient(_client_config()) as client:
+            if args.goal:
+                summary = await run_orchestrator(client, args.goal)
+                print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}")
+                return
 
-        print("\nMulti-agent team ready. Type a feature goal (or 'quit').\n")
-        while True:
-            try:
-                goal = input("goal> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\nBye!")
-                break
+            print("\nMulti-agent team ready. Type a feature goal (or 'quit').\n")
+            while True:
+                try:
+                    goal = input("goal> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nBye!")
+                    break
 
-            if goal.lower() in {"quit", "exit", "q"}:
-                break
-            if not goal:
-                continue
+                if goal.lower() in {"quit", "exit", "q"}:
+                    break
+                if not goal:
+                    continue
 
-            summary = await run_orchestrator(client, goal)
-            print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}\n")
+                summary = await run_orchestrator(client, goal)
+                print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}\n")
+    except Exception as exc:
+        raise RuntimeError(_render_runtime_error(exc)) from exc
 
 
 def main() -> None:

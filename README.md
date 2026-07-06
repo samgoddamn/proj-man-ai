@@ -134,6 +134,12 @@ python3 team.py                              # interaktivt läge
 - `github-copilot-sdk` installerat i din Python-miljö
 - en lokal Copilot CLI-binär tillgänglig via `COPILOT_CLI_PATH` eller `PATH`
 
+Snabbaste sättet att verifiera att SDK + CLI fungerar innan du kör hela teamet:
+
+```bash
+python3 scripts/copilot-sdk-smoke-test.py
+```
+
 Grundkonfiguration:
 
 ```bash

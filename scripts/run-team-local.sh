@@ -14,6 +14,9 @@
 #   2. Verifierar att Python-SDK:n finns installerad.
 #   3. Kör team.py med angiven feature-slug och mål.
 #
+# Kör `scripts/copilot-sdk-smoke-test.py` först om du vill verifiera SDK + CLI
+# utan att starta hela multi-agent-flödet.
+#
 # Standard-output är ./team_output. Skicka '.' som tredje argument för att skriva
 # direkt i repot.
 
@@ -65,6 +68,6 @@ python3 "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL" | tee "$LOG
 
 if grep -q "Access denied by policy settings" "$LOG_FILE"; then
   echo "✗ Copilot CLI blockerades av policy. Ingen feature genererades." >&2
-  echo "  Tips: verifiera Copilot-behörigheten i GitHub Copilot-inställningarna." >&2
+  echo "  Tips: kör scripts/copilot-sdk-smoke-test.py eller verifiera Copilot-behörigheten i GitHub Copilot-inställningarna." >&2
   exit 1
 fi
