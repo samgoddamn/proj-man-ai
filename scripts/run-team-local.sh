@@ -32,6 +32,8 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 OUTPUT="${OUTPUT_ARG:-$ROOT/team_output}"
+LOG_FILE="$(mktemp)"
+trap 'rm -f "$LOG_FILE"' EXIT
 
 export COPILOT_CMD="${COPILOT_CMD:-$ROOT/scripts/copilot-wrapper.py}"
 export COPILOT_WRAPPER_BACKEND="${COPILOT_WRAPPER_BACKEND:-gh}"
@@ -48,4 +50,10 @@ if [[ -n "${COPILOT_WRAPPER_MOCK_RESPONSE:-}" ]]; then
   echo "   Mock:    aktiv (COPILOT_WRAPPER_MOCK_RESPONSE satt)"
 fi
 
-python3 "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL"
+python3 "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL" | tee "$LOG_FILE"
+
+if grep -q "Access denied by policy settings" "$LOG_FILE"; then
+  echo "✗ Copilot CLI blockerades av policy. Ingen feature genererades." >&2
+  echo "  Tips: verifiera Copilot-behörigheten eller testa med COPILOT_WRAPPER_MOCK_RESPONSE först." >&2
+  exit 1
+fi

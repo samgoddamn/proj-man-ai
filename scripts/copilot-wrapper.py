@@ -122,11 +122,18 @@ def _run_backend(prompt: str) -> str:
         timeout=120,
     )
 
+    stderr = (proc.stderr or "").strip()
+    stdout = (proc.stdout or "").strip()
+
     if proc.returncode != 0:
-        error_output = (proc.stderr or proc.stdout or "").strip()
+        error_output = (stderr or stdout or "").strip()
         raise RuntimeError(f"Backend command failed with exit code {proc.returncode}: {error_output}")
 
-    return (proc.stdout or "").strip()
+    # Some local CLIs report policy or auth failures on stderr while still exiting 0.
+    if not stdout and stderr:
+        return stderr
+
+    return stdout
 
 
 def main() -> int:
