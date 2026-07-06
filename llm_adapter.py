@@ -12,6 +12,8 @@ Supported block shapes:
 
 If any `tool_use` blocks are present, `stop_reason` is set so `team.py` continues
 the tool loop instead of ending immediately.
+
+Protocol reference: docs/copilot-cli-protocol.md
 """
 from __future__ import annotations
 
