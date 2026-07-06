@@ -87,7 +87,7 @@ echo "   CLI:     $COPILOT_CLI_PATH"
 
 "$PYTHON_CMD" "$ROOT/team.py" --output "$OUTPUT" --feature "$SLUG" "$GOAL" | tee "$LOG_FILE"
 
-if grep -q "Access denied by policy settings" "$LOG_FILE"; then
+if grep -Eq "Access denied by policy settings|not authorized to use this Copilot feature" "$LOG_FILE"; then
   echo "✗ Copilot CLI blockerades av policy. Ingen feature genererades." >&2
   echo "  Tips: kör scripts/copilot-sdk-smoke-test.py eller verifiera Copilot-behörigheten i GitHub Copilot-inställningarna." >&2
   exit 1

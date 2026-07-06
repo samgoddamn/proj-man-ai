@@ -24,10 +24,12 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from copilot import CopilotClient, PermissionHandler, define_tool
+    from copilot import CopilotClient, PermissionHandler, StdioRuntimeConnection, UriRuntimeConnection, define_tool
 except ImportError:
     CopilotClient = None
     PermissionHandler = None
+    StdioRuntimeConnection = None
+    UriRuntimeConnection = None
     define_tool = None
 
 output_dir: Path = Path("./team_output").resolve()
@@ -168,17 +170,16 @@ def _build_file_tools(role: str) -> list[Any]:
 
 
 def _client_config() -> dict[str, Any]:
-    config: dict[str, Any] = {
-        "use_stdio": True,
-        "auto_start": True,
-        "auto_restart": True,
-        "cwd": str(Path.cwd()),
-    }
-    if os.environ.get("COPILOT_CLI_PATH"):
-        config["cli_path"] = os.environ["COPILOT_CLI_PATH"]
     if os.environ.get("COPILOT_CLI_URL"):
-        config["cli_url"] = os.environ["COPILOT_CLI_URL"]
-    return config
+        return {
+            "connection": UriRuntimeConnection(url=os.environ["COPILOT_CLI_URL"]),
+            "working_directory": str(Path.cwd()),
+        }
+
+    return {
+        "connection": StdioRuntimeConnection(path=_cli_path()),
+        "working_directory": str(Path.cwd()),
+    }
 
 
 def _cli_path() -> str:
@@ -186,7 +187,13 @@ def _cli_path() -> str:
 
 
 def _require_sdk_dependencies() -> None:
-    if CopilotClient is None or PermissionHandler is None or define_tool is None:
+    if (
+        CopilotClient is None
+        or PermissionHandler is None
+        or StdioRuntimeConnection is None
+        or UriRuntimeConnection is None
+        or define_tool is None
+    ):
         raise RuntimeError(
             "Missing Python dependency 'github-copilot-sdk'. Install it with: pip install -r requirements.txt"
         )
@@ -196,7 +203,7 @@ def _render_runtime_error(exc: Exception) -> str:
     message = str(exc)
     lines = [f"Copilot SDK run failed: {message}"]
 
-    if "Access denied by policy settings" in message:
+    if "Access denied by policy settings" in message or "not authorized to use this Copilot feature" in message:
         lines.append("Copilot CLI access is blocked by policy or subscription settings.")
         lines.append("Check your Copilot settings: https://github.com/settings/copilot")
     elif "No such file or directory" in message or "not found" in message.lower():
@@ -235,7 +242,7 @@ async def _send_prompt_and_collect(session: Any, prompt: str) -> str:
 
     unsubscribe = session.on(handler)
     try:
-        await session.send({"prompt": prompt})
+        await session.send(prompt)
         await done.wait()
     finally:
         unsubscribe()
@@ -413,7 +420,7 @@ async def run_subagent(client: CopilotClient, role: str, task: str, context: str
         system_content += f"\n\n## Context from orchestrator\n{context}"
 
     async with await client.create_session(
-        _session_config(subagent_model, _build_file_tools(role), system_content)
+        **_session_config(subagent_model, _build_file_tools(role), system_content)
     ) as session:
         summary = await _send_prompt_and_collect(session, task)
 
@@ -444,7 +451,7 @@ async def run_orchestrator(client: CopilotClient, goal: str) -> str:
     )
 
     async with await client.create_session(
-        _session_config(default_model, [dispatch_tool], orchestrator_system)
+        **_session_config(default_model, [dispatch_tool], orchestrator_system)
     ) as session:
         summary = await _send_prompt_and_collect(session, goal)
 
@@ -463,7 +470,7 @@ async def main_async(args: argparse.Namespace) -> None:
     print(f"Feature: {feature_slug}")
 
     try:
-        async with CopilotClient(_client_config()) as client:
+        async with CopilotClient(**_client_config()) as client:
             if args.goal:
                 summary = await run_orchestrator(client, args.goal)
                 print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}")

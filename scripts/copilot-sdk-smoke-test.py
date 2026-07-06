@@ -14,7 +14,7 @@ import os
 import sys
 
 try:
-    from copilot import CopilotClient, PermissionHandler
+    from copilot import CopilotClient, PermissionHandler, StdioRuntimeConnection, UriRuntimeConnection
 except ImportError as exc:
     print("Missing dependency: github-copilot-sdk", file=sys.stderr)
     print("Install it with: pip install -r requirements.txt", file=sys.stderr)
@@ -22,14 +22,10 @@ except ImportError as exc:
 
 
 def _client_config() -> dict[str, object]:
-    config: dict[str, object] = {
-        "use_stdio": True,
-        "auto_start": True,
-        "auto_restart": True,
-    }
-    if os.environ.get("COPILOT_CLI_PATH"):
-        config["cli_path"] = os.environ["COPILOT_CLI_PATH"]
-    return config
+    if os.environ.get("COPILOT_CLI_URL"):
+        return {"connection": UriRuntimeConnection(url=os.environ["COPILOT_CLI_URL"])}
+
+    return {"connection": StdioRuntimeConnection(path=os.environ.get("COPILOT_CLI_PATH", "copilot"))}
 
 
 async def main() -> int:
@@ -37,18 +33,15 @@ async def main() -> int:
     print(f"Using Copilot CLI: {cli_path}")
 
     try:
-        async with CopilotClient(_client_config()) as client:
+        async with CopilotClient(**_client_config()) as client:
             response = await client.ping("health check")
-            print(f"Ping ok: {response['timestamp']}")
+            print(f"Ping ok: {response.timestamp} ({response.message})")
 
-            async with await client.create_session({
-                "on_permission_request": PermissionHandler.approve_all,
-                "model": os.environ.get("TEAM_MODEL", "gpt-5"),
-            }) as session:
-                event = await session.send_and_wait(
-                    {"prompt": "Reply with exactly: sdk-ok"},
-                    timeout=60.0,
-                )
+            async with await client.create_session(
+                on_permission_request=PermissionHandler.approve_all,
+                model=os.environ.get("TEAM_MODEL", "gpt-5"),
+            ) as session:
+                event = await session.send_and_wait("Reply with exactly: sdk-ok", timeout=60.0)
 
             if event and event.type == "assistant.message":
                 print(f"Assistant reply: {event.data.content}")
@@ -59,7 +52,7 @@ async def main() -> int:
     except Exception as exc:
         message = str(exc)
         print(f"Smoke test failed: {message}", file=sys.stderr)
-        if "Access denied by policy settings" in message:
+        if "Access denied by policy settings" in message or "not authorized to use this Copilot feature" in message:
             print("Copilot CLI access is blocked by policy or subscription settings.", file=sys.stderr)
             print("Check https://github.com/settings/copilot", file=sys.stderr)
         return 1
