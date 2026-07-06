@@ -17,14 +17,14 @@ Usage
   python team.py                             # interactive mode
 """
 
-import anthropic
+import os
+from llm_adapter import send_request
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 
-client = anthropic.Anthropic()
 output_dir: Path = Path("./team_output").resolve()
 feature_slug: str = "feature"  # sätts från --feature; används för doc-sökvägar
 
@@ -272,14 +272,8 @@ def run_subagent(role: str, task: str, context: str = "") -> str:
     messages = [{"role": "user", "content": task}]
 
     while True:
-        response = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
-            system=system,
-            tools=FILE_TOOLS,
-            messages=messages,
-        )
+        # Send prompt to local Copilot CLI via llm_adapter.send_request
+        response = send_request(system=system, messages=messages, tools=FILE_TOOLS, max_tokens=16000)
 
         # Done — extract final text
         if response.stop_reason == "end_turn":
@@ -388,14 +382,8 @@ def run_orchestrator(goal: str) -> str:
     messages = [{"role": "user", "content": goal}]
 
     while True:
-        response = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
-            system=orchestrator_system,
-            tools=[DISPATCH_TOOL],
-            messages=messages,
-        )
+        # Send prompt to local Copilot CLI via llm_adapter.send_request
+        response = send_request(system=orchestrator_system, messages=messages, tools=[DISPATCH_TOOL], max_tokens=16000)
 
         # Orchestrator finished
         if response.stop_reason == "end_turn":
