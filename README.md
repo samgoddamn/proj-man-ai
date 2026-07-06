@@ -127,6 +127,35 @@ python team.py --output ./team_output "Bygg X"
 python team.py                              # interaktivt läge
 ```
 
+**Köra `team.py` via lokal Copilot CLI-wrapper**
+
+Om du vill köra `team.py` utan Anthropic/OpenAI-API direkt kan du använda den
+lokala wrappern i [scripts/copilot-wrapper.py](scripts/copilot-wrapper.py), som
+normaliserar CLI-output till repoets JSON-protokoll i
+[docs/copilot-cli-protocol.md](docs/copilot-cli-protocol.md).
+
+Grundkonfiguration:
+
+```bash
+export COPILOT_CMD="./scripts/copilot-wrapper.py"
+export COPILOT_WRAPPER_BACKEND="gh"
+export COPILOT_WRAPPER_ARGS="copilot -p"
+python3 team.py --output ./team_output "Bygg X"
+```
+
+För lokal testning utan riktig backend kan du mocka svaret:
+
+```bash
+export COPILOT_CMD="./scripts/copilot-wrapper.py"
+export COPILOT_WRAPPER_MOCK_RESPONSE='[{"type":"text","text":"ok"}]'
+python3 team.py --output ./team_output "Bygg X"
+```
+
+Begränsning:
+- Om `gh copilot` blockeras av organisationspolicy eller saknar rättigheter kommer
+  wrappern inte kunna köra end-to-end mot Copilot-tjänsten. I det läget fungerar
+  mock-läget fortfarande för lokal verifiering av wrapperflödet.
+
 > ⚠️ Agenterna har bara fil-verktyg — de kör inte bygg/tester. Granska PR:en och kör
 > verifieringen (`npx tsc --noEmit && npm run build`, `py_compile`/tester) **innan**
 > du mergar. Granskaragentens `docs/reviews/<slug>.md` är en hjälp, inte en garanti.
