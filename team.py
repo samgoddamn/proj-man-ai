@@ -19,23 +19,65 @@ Usage
 
 import argparse
 import asyncio
+import json
 import os
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 try:
-    from copilot import CopilotClient, PermissionHandler, StdioRuntimeConnection, UriRuntimeConnection, define_tool
+    from copilot import CopilotClient, PermissionHandler, StdioRuntimeConnection, ToolSet, UriRuntimeConnection, define_tool
 except ImportError:
     CopilotClient = None
     PermissionHandler = None
     StdioRuntimeConnection = None
+    ToolSet = None
     UriRuntimeConnection = None
     define_tool = None
 
+workspace_root: Path = Path.cwd().resolve()
 output_dir: Path = Path("./team_output").resolve()
 feature_slug: str = "feature"
-default_model: str = os.environ.get("TEAM_MODEL", "gpt-5")
+default_model: str = os.environ.get("TEAM_MODEL", "auto")
 subagent_model: str = os.environ.get("TEAM_SUBAGENT_MODEL", default_model)
+debug_enabled: bool = os.environ.get("TEAM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+run_messages_log_path: Path | None = None
+run_events_log_path: Path | None = None
+latest_messages_log_path: Path | None = None
+latest_events_log_path: Path | None = None
+run_status_path: Path | None = None
+latest_status_path: Path | None = None
+current_active_label: str = "system"
+last_event_message: str = ""
+last_message_text: str = ""
+
+
+def _derive_phase(label: str, event: str) -> str:
+    normalized_event = event.lower()
+
+    if "run failed" in normalized_event or "session.error" in normalized_event:
+        return "failed"
+    if label == "system" and "run completed" in normalized_event:
+        return "done"
+    if label.startswith("subagent:architect") or label == "architect":
+        return "planning"
+    if label.startswith("subagent:frontend") or label == "frontend":
+        return "implementing"
+    if label.startswith("subagent:backend") or label == "backend":
+        return "implementing"
+    if label.startswith("subagent:reviewer") or label == "reviewer":
+        return "reviewing"
+    if label == "orchestrator":
+        if "dispatch -> reviewer" in normalized_event:
+            return "reviewing"
+        if "dispatch -> architect" in normalized_event:
+            return "planning"
+        if "dispatch -> frontend" in normalized_event or "dispatch -> backend" in normalized_event:
+            return "implementing"
+        return "orchestrating"
+    return "starting"
 
 PROJECT_CONTEXT = """\
 ## Project context — you work INSIDE an existing monorepo, not a blank slate
@@ -107,15 +149,174 @@ FILE_TOOLS = [
 ]
 
 
+class WriteFileArgs(BaseModel):
+    path: str = Field(description="Relative file path")
+    content: str = Field(description="Full file content")
+
+
+class ReadFileArgs(BaseModel):
+    path: str = Field(description="Relative file path")
+
+
+class ListDirectoryArgs(BaseModel):
+    path: str = Field(default=".", description="Relative directory path (default '.' = output root)")
+
+
+class DispatchArgs(BaseModel):
+    role: str = Field(description="Which specialist to use")
+    task: str = Field(description="Clear, specific task for this agent.")
+    context: str = Field(default="", description="Optional context this agent needs.")
+
+
+def _debug(message: str) -> None:
+    if debug_enabled:
+        print(f"[debug] {message}")
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+
+
+def _append_log_line(path: Path | None, line: str) -> None:
+    if path is None:
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+
+
+def _write_status_file(path: Path | None) -> None:
+    if path is None:
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "timestamp": _timestamp(),
+        "feature": feature_slug,
+        "phase": _derive_phase(current_active_label, last_event_message),
+        "active": current_active_label,
+        "last_event": last_event_message,
+        "last_message": last_message_text,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def _update_status(label: str, *, event: str | None = None, message: str | None = None) -> None:
+    global current_active_label, last_event_message, last_message_text
+
+    current_active_label = label
+    if event is not None:
+        last_event_message = event.replace("\n", "\\n")
+    if message is not None:
+        last_message_text = message.replace("\n", "\\n")
+
+    _write_status_file(run_status_path)
+    _write_status_file(latest_status_path)
+
+
+def _append_run_log(kind: str, label: str, message: str) -> None:
+    line = f"[{_timestamp()}] [{kind}] [{label}] {message}\n"
+    if kind == "message":
+        _append_log_line(run_messages_log_path, line)
+        _append_log_line(latest_messages_log_path, line)
+    elif kind == "event":
+        _append_log_line(run_events_log_path, line)
+        _append_log_line(latest_events_log_path, line)
+
+
+def _log_run_message(label: str, message: str) -> None:
+    normalized = message.replace("\n", "\\n")
+    _append_run_log("message", label, normalized)
+    _update_status(label, message=normalized)
+
+
+def _log_run_event(label: str, message: str) -> None:
+    _append_run_log("event", label, message)
+    _update_status(label, event=message)
+
+
+def _event_type_name(event: Any) -> str:
+    event_type = getattr(event, "type", "")
+    return getattr(event_type, "value", event_type)
+
+
+def _event_preview(event: Any) -> str:
+    data = getattr(event, "data", None)
+    content = getattr(data, "content", None)
+    if isinstance(content, str) and content:
+        return content.replace("\n", " ")[:120]
+
+    message = getattr(data, "message", None)
+    if isinstance(message, str) and message:
+        return message.replace("\n", " ")[:120]
+
+    return ""
+
+
+def _build_event_logger(label: str):
+    noisy_events = {
+        "assistant.streaming_delta",
+        "assistant.message_delta",
+        "pending_messages.modified",
+        "session.usage_info",
+        "assistant.usage",
+    }
+
+    def log_event(event: Any) -> None:
+        event_type = _event_type_name(event)
+        preview = _event_preview(event)
+
+        if event_type == "assistant.message" and preview:
+            _log_run_message(label, getattr(getattr(event, "data", None), "content", preview))
+        elif event_type in {"assistant.turn_start", "assistant.turn_end", "assistant.idle", "session.idle", "session.start"}:
+            _log_run_event(label, event_type)
+        elif event_type == "session.error":
+            _log_run_event(label, f"session.error :: {preview or 'unknown error'}")
+
+        if not debug_enabled or event_type in noisy_events:
+            return
+
+        suffix = f" :: {preview}" if preview else ""
+        _debug(f"{label} event={event_type}{suffix}")
+
+    return log_event
+
+
+def _resolve_output_path(path: str) -> Path:
+    full = (output_dir / path).resolve()
+    try:
+        full.relative_to(output_dir)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes output directory: {path}") from exc
+    return full
+
+
+def _resolve_workspace_path(path: str) -> Path:
+    full = (workspace_root / path).resolve()
+    try:
+        full.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace root: {path}") from exc
+    return full
+
+
+def _resolve_read_path(path: str) -> Path:
+    output_full = _resolve_output_path(path)
+    if output_full.exists():
+        return output_full
+    return _resolve_workspace_path(path)
+
+
 def _write_file(path: str, content: str) -> str:
-    full = output_dir / path
+    full = _resolve_output_path(path)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     return f"Created {path} ({len(content)} bytes)"
 
 
 def _read_file(path: str) -> str:
-    full = output_dir / path
+    full = _resolve_read_path(path)
     return full.read_text(encoding="utf-8") if full.exists() else f"Error: {path} not found"
 
 
@@ -123,10 +324,26 @@ _IGNORE_DIRS = {"node_modules", ".next", ".git", ".venv", "venv", "__pycache__",
 
 
 def _list_directory(path: str = ".") -> str:
-    full = output_dir / path
-    if not full.exists():
+    workspace_full = _resolve_workspace_path(path)
+    output_full = _resolve_output_path(path)
+
+    if not workspace_full.exists() and not output_full.exists():
         return f"Error: {path} not found"
-    entries = sorted(full.iterdir(), key=lambda item: (item.is_file(), item.name))
+
+    entries_by_name: dict[str, Path] = {}
+    if workspace_full.exists() and workspace_full.is_dir():
+        for entry in workspace_full.iterdir():
+            entries_by_name[entry.name] = entry
+    if output_full.exists() and output_full.is_dir():
+        for entry in output_full.iterdir():
+            entries_by_name[entry.name] = entry
+
+    if output_full.exists() and output_full.is_file():
+        return f"Error: {path} is a file, not a directory"
+    if workspace_full.exists() and workspace_full.is_file():
+        return f"Error: {path} is a file, not a directory"
+
+    entries = sorted(entries_by_name.values(), key=lambda item: (item.is_file(), item.name))
     lines = [
         ("  " if entry.is_file() else "D ") + entry.name
         for entry in entries
@@ -136,35 +353,52 @@ def _list_directory(path: str = ".") -> str:
 
 
 def _build_file_tools(role: str) -> list[Any]:
-    async def write_file_handler(args: dict[str, Any], _invocation: Any) -> str:
-        result = _write_file(args["path"], args["content"])
-        print(f"  [{role}] wrote {args['path']}")
+    async def write_file_handler(args: WriteFileArgs, _invocation: Any) -> str:
+        try:
+            result = _write_file(args.path, args.content)
+        except ValueError as exc:
+            _debug(f"[{role}] blocked write path={args.path}: {exc}")
+            _log_run_event(role, f"blocked write {args.path}: {exc}")
+            return f"Error: {exc}"
+
+        print(f"  [{role}] wrote {args.path}")
+        _log_run_event(role, f"wrote {args.path}")
         return result
 
-    async def read_file_handler(args: dict[str, Any], _invocation: Any) -> str:
-        return _read_file(args["path"])
+    async def read_file_handler(args: ReadFileArgs, _invocation: Any) -> str:
+        try:
+            return _read_file(args.path)
+        except ValueError as exc:
+            _debug(f"[{role}] blocked read path={args.path}: {exc}")
+            _log_run_event(role, f"blocked read {args.path}: {exc}")
+            return f"Error: {exc}"
 
-    async def list_directory_handler(args: dict[str, Any], _invocation: Any) -> str:
-        return _list_directory(args.get("path", "."))
+    async def list_directory_handler(args: ListDirectoryArgs, _invocation: Any) -> str:
+        try:
+            return _list_directory(args.path)
+        except ValueError as exc:
+            _debug(f"[{role}] blocked list path={args.path}: {exc}")
+            _log_run_event(role, f"blocked list {args.path}: {exc}")
+            return f"Error: {exc}"
 
     return [
         define_tool(
             name="write_file",
             description=FILE_TOOLS[0]["description"],
-            parameters=FILE_TOOLS[0]["input_schema"],
             handler=write_file_handler,
+            params_type=WriteFileArgs,
         ),
         define_tool(
             name="read_file",
             description=FILE_TOOLS[1]["description"],
-            parameters=FILE_TOOLS[1]["input_schema"],
             handler=read_file_handler,
+            params_type=ReadFileArgs,
         ),
         define_tool(
             name="list_directory",
             description=FILE_TOOLS[2]["description"],
-            parameters=FILE_TOOLS[2]["input_schema"],
             handler=list_directory_handler,
+            params_type=ListDirectoryArgs,
         ),
     ]
 
@@ -191,6 +425,7 @@ def _require_sdk_dependencies() -> None:
         CopilotClient is None
         or PermissionHandler is None
         or StdioRuntimeConnection is None
+        or ToolSet is None
         or UriRuntimeConnection is None
         or define_tool is None
     ):
@@ -214,43 +449,43 @@ def _render_runtime_error(exc: Exception) -> str:
     return "\n".join(lines)
 
 
-def _session_config(model: str, tools: list[Any], system_content: str) -> dict[str, Any]:
-    return {
+def _session_config(model: str, tools: list[Any], system_content: str, label: str) -> dict[str, Any]:
+    available_tools = ToolSet().add_custom("*")
+
+    config = {
         "on_permission_request": PermissionHandler.approve_all,
         "model": model,
         "tools": tools,
+        "available_tools": available_tools,
         "system_message": {
             "mode": "append",
             "content": system_content,
         },
     }
 
+    config["on_event"] = _build_event_logger(label)
 
-async def _send_prompt_and_collect(session: Any, prompt: str) -> str:
-    done = asyncio.Event()
-    assistant_messages: list[str] = []
-    session_errors: list[str] = []
+    return config
 
-    def handler(event: Any) -> None:
-        if event.type == "assistant.message":
-            assistant_messages.append(event.data.content)
-        elif event.type == "session.error":
-            session_errors.append(getattr(event.data, "message", str(event.data)))
-            done.set()
-        elif event.type == "session.idle":
-            done.set()
 
-    unsubscribe = session.on(handler)
-    try:
-        await session.send(prompt)
-        await done.wait()
-    finally:
-        unsubscribe()
+async def _send_prompt_and_collect(session: Any, prompt: str, label: str) -> str:
+    _debug(f"{label} send prompt={prompt[:120].replace(chr(10), ' ')}")
+    _log_run_event(label, f"prompt: {prompt[:240].replace(chr(10), ' ')}")
+    event = await session.send_and_wait(prompt, timeout=300.0)
+    if event is None:
+        _debug(f"{label} completed with no terminal event")
+        _log_run_event(label, "completed with no terminal event")
+        return ""
 
-    if session_errors:
-        raise RuntimeError(session_errors[-1])
+    event_type = _event_type_name(event)
+    _debug(f"{label} terminal event={event_type} :: {_event_preview(event)}")
+    _log_run_event(label, f"terminal event: {event_type}")
 
-    return assistant_messages[-1] if assistant_messages else ""
+    if event_type == "assistant.message":
+        return event.data.content
+    if event_type == "session.error":
+        raise RuntimeError(getattr(event.data, "message", str(event.data)))
+    return ""
 
 
 AGENTS = {
@@ -408,6 +643,7 @@ async def run_subagent(client: CopilotClient, role: str, task: str, context: str
         return f"Error: unknown role '{role}'. Choose from: {', '.join(AGENTS)}"
 
     print(f"  [{role}] -> {task[:70]}{'...' if len(task) > 70 else ''}")
+    _log_run_event(role, f"start task: {task}")
 
     system_content = (
         profile["system"]
@@ -420,16 +656,20 @@ async def run_subagent(client: CopilotClient, role: str, task: str, context: str
         system_content += f"\n\n## Context from orchestrator\n{context}"
 
     async with await client.create_session(
-        **_session_config(subagent_model, _build_file_tools(role), system_content)
+        **_session_config(subagent_model, _build_file_tools(role), system_content, f"subagent:{role}")
     ) as session:
-        summary = await _send_prompt_and_collect(session, task)
+        summary = await _send_prompt_and_collect(session, task, f"subagent:{role}")
 
     print(f"  [{role}] done")
+    _log_run_event(role, "done")
+    if summary:
+        _log_run_message(role, summary)
     return summary or "(no summary)"
 
 
 async def run_orchestrator(client: CopilotClient, goal: str) -> str:
     print(f"\nGoal: {goal}\n{'-' * 60}")
+    _log_run_event("orchestrator", f"goal: {goal}")
 
     orchestrator_system = (
         ORCHESTRATOR_SYSTEM
@@ -440,40 +680,79 @@ async def run_orchestrator(client: CopilotClient, goal: str) -> str:
         + f"docs/reviews/{feature_slug}.md. Tell the reviewer exactly which files were created."
     )
 
-    async def dispatch_handler(args: dict[str, Any], _invocation: Any) -> str:
-        return await run_subagent(client, args["role"], args["task"], args.get("context", ""))
+    async def dispatch_handler(args: DispatchArgs, _invocation: Any) -> str:
+        _debug(f"orchestrator dispatch role={args.role} task={args.task[:120]}")
+        _log_run_event("orchestrator", f"dispatch -> {args.role}: {args.task}")
+        return await run_subagent(client, args.role, args.task, args.context)
 
     dispatch_tool = define_tool(
         name=DISPATCH_TOOL["name"],
         description=DISPATCH_TOOL["description"],
-        parameters=DISPATCH_TOOL["input_schema"],
         handler=dispatch_handler,
+        params_type=DispatchArgs,
     )
 
     async with await client.create_session(
-        **_session_config(default_model, [dispatch_tool], orchestrator_system)
+        **_session_config(default_model, [dispatch_tool], orchestrator_system, "orchestrator")
     ) as session:
-        summary = await _send_prompt_and_collect(session, goal)
+        summary = await _send_prompt_and_collect(session, goal, "orchestrator")
 
+    if summary:
+        _log_run_message("orchestrator", summary)
     return summary or "(done)"
 
 
 async def main_async(args: argparse.Namespace) -> None:
     _require_sdk_dependencies()
 
-    global output_dir, feature_slug
+    global output_dir, feature_slug, run_messages_log_path, run_events_log_path
+    global latest_messages_log_path, latest_events_log_path, run_status_path, latest_status_path
+    global current_active_label, last_event_message, last_message_text
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     feature_slug = args.feature
+    logs_dir = output_dir / "logs"
+    run_messages_log_path = logs_dir / f"{feature_slug}.messages.log"
+    run_events_log_path = logs_dir / f"{feature_slug}.events.log"
+    latest_messages_log_path = logs_dir / "latest.messages.log"
+    latest_events_log_path = logs_dir / "latest.events.log"
+    run_status_path = logs_dir / f"{feature_slug}.status.json"
+    latest_status_path = logs_dir / "latest.status.json"
+    current_active_label = "system"
+    last_event_message = "run initialized"
+    last_message_text = ""
+
+    for path in (
+        run_messages_log_path,
+        run_events_log_path,
+        latest_messages_log_path,
+        latest_events_log_path,
+        run_status_path,
+        latest_status_path,
+    ):
+        if path.exists():
+            path.unlink()
 
     print(f"Output: {output_dir}")
     print(f"Feature: {feature_slug}")
+    print(f"Messages log: {run_messages_log_path}")
+    print(f"Events log: {run_events_log_path}")
+    print(f"Latest status: {latest_status_path}")
+    _log_run_event("system", f"output={output_dir}")
+    _log_run_event("system", f"feature={feature_slug}")
+    _log_run_event("system", f"run_messages_log={run_messages_log_path}")
+    _log_run_event("system", f"run_events_log={run_events_log_path}")
+    _log_run_event("system", f"latest_messages_log={latest_messages_log_path}")
+    _log_run_event("system", f"latest_events_log={latest_events_log_path}")
+    _log_run_event("system", f"run_status={run_status_path}")
+    _log_run_event("system", f"latest_status={latest_status_path}")
 
     try:
         async with CopilotClient(**_client_config()) as client:
             if args.goal:
                 summary = await run_orchestrator(client, args.goal)
                 print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}")
+                _log_run_event("system", "run completed")
                 return
 
             print("\nMulti-agent team ready. Type a feature goal (or 'quit').\n")
@@ -491,7 +770,9 @@ async def main_async(args: argparse.Namespace) -> None:
 
                 summary = await run_orchestrator(client, goal)
                 print(f"\n{'-' * 60}\n{summary}\n{'-' * 60}\n")
+                _log_run_event("system", "interactive goal completed")
     except Exception as exc:
+        _log_run_event("system", f"run failed: {exc}")
         raise RuntimeError(_render_runtime_error(exc)) from exc
 
 
