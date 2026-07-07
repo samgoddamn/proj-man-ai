@@ -63,7 +63,7 @@ export default function GeneratingPage() {
     <div className="mx-auto max-w-xl space-y-6">
       <h1 className="text-2xl font-bold">Genererar projekt…</h1>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
         <div
           className="h-full bg-brand-600 transition-all duration-500"
           style={{ width: `${Math.round(progress * 100)}%` }}
@@ -81,11 +81,13 @@ export default function GeneratingPage() {
                 ? "text-brand-600"
                 : st === "failed"
                   ? "text-red-600"
-                  : "text-slate-300";
+                  : "text-slate-300 dark:text-slate-600";
           return (
             <div key={a.key} className="flex items-center gap-3">
               <span className={`text-lg ${color} ${st === "running" ? "animate-spin" : ""}`}>{icon}</span>
-              <span className={st ? "text-slate-900" : "text-slate-400"}>{a.label}</span>
+              <span className={st ? "text-slate-900 dark:text-slate-100" : "text-slate-400 dark:text-slate-500"}>
+                {a.label}
+              </span>
             </div>
           );
         })}
