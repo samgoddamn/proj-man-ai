@@ -36,10 +36,10 @@ export default function HomePage() {
 
       {error && <Card className="text-red-600">Kunde inte ladda projekt: {error}</Card>}
 
-      {projects === null && !error && <p className="text-slate-500">Laddar…</p>}
+      {projects === null && !error && <p className="text-slate-500 dark:text-slate-400">Laddar…</p>}
 
       {projects?.length === 0 && (
-        <Card className="text-slate-500">
+        <Card className="text-slate-500 dark:text-slate-400">
           Inga projekt än. Skapa ditt första så genererar AI:n hela projektstrukturen.
         </Card>
       )}
@@ -52,7 +52,7 @@ export default function HomePage() {
                 <h2 className="font-semibold">{p.name}</h2>
                 <Badge tone={STATUS_TONE[p.status]}>{p.status}</Badge>
               </div>
-              <p className="mt-2 line-clamp-2 text-sm text-slate-600">{p.description}</p>
+              <p className="mt-2 line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{p.description}</p>
             </Card>
           </Link>
         ))}

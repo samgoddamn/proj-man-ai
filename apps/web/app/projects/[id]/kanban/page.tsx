@@ -35,13 +35,13 @@ function TaskCard({ task }: { task: Task }) {
       {...listeners}
       {...attributes}
       className={
-        "cursor-grab rounded-md border border-slate-200 bg-white p-3 text-sm shadow-sm " +
+        "cursor-grab rounded-md border border-slate-200 bg-white p-3 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900 " +
         (isDragging ? "opacity-40" : "")
       }
     >
       <div className="font-medium">{task.title}</div>
-      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5">{task.type}</span>
+      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">{task.type}</span>
         {task.estimate != null && <span>{task.estimate}p</span>}
       </div>
     </div>
@@ -54,13 +54,13 @@ function Column({ col, tasks }: { col: { key: TaskStatus; label: string }; tasks
     <div
       ref={setNodeRef}
       className={
-        "flex w-64 shrink-0 flex-col gap-2 rounded-lg bg-slate-100 p-3 " +
+        "flex w-64 shrink-0 flex-col gap-2 rounded-lg bg-slate-100 p-3 dark:bg-slate-800/80 " +
         (isOver ? "ring-2 ring-brand-400" : "")
       }
     >
-      <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
+      <div className="flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-200">
         <span>{col.label}</span>
-        <span className="text-slate-400">{tasks.length}</span>
+        <span className="text-slate-400 dark:text-slate-500">{tasks.length}</span>
       </div>
       {tasks.map((t) => (
         <TaskCard key={t.id} task={t} />

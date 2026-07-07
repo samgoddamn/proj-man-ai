@@ -51,7 +51,7 @@ export default function NewProjectPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-2xl font-bold">Nytt projekt</h1>
-      <p className="text-slate-600">
+      <p className="text-slate-600 dark:text-slate-300">
         Beskriv idén — AI:n genererar roadmap, epics, user stories, tasks, sprintar och riskanalys.
       </p>
 

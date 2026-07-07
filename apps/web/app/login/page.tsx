@@ -63,7 +63,7 @@ export default function LoginPage() {
         </Card>
       </form>
 
-      <p className="text-center text-sm text-slate-500">
+      <p className="text-center text-sm text-slate-500 dark:text-slate-400">
         {mode === "login" ? "Inget konto?" : "Har du redan ett konto?"}{" "}
         <button
           className="font-medium text-brand-600 hover:text-brand-700"

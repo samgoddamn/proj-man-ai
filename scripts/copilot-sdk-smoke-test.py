@@ -39,7 +39,7 @@ async def main() -> int:
 
             async with await client.create_session(
                 on_permission_request=PermissionHandler.approve_all,
-                model=os.environ.get("TEAM_MODEL", "gpt-5"),
+                model=os.environ.get("TEAM_MODEL", "auto"),
             ) as session:
                 event = await session.send_and_wait("Reply with exactly: sdk-ok", timeout=60.0)
 
